@@ -3,7 +3,7 @@ name: Build Base Image
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - "src/mltoolbox/base/**"
       - ".github/workflows/build_base.yml"

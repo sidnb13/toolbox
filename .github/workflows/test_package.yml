@@ -3,7 +3,7 @@ name: Test Package
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [master]
     paths:
       - "src/**"
       - "tests/**"
