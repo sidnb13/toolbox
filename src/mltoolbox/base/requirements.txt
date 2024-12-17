@@ -26,3 +26,4 @@ ipykernel
 jupyter
 hydra_colorlog
 ray[default]
+hydra-ray-jobs-launcher

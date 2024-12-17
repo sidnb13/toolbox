@@ -12,6 +12,8 @@ ENV TZ=Etc/UTC \
     GIT_NAME=${GIT_NAME} \
     DEBIAN_FRONTEND=noninteractive
 
+WORKDIR /workspace
+
 # Install system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -27,6 +29,9 @@ RUN apt-get update && \
     vim \
     wget \
     zsh \
+    && sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh)" -- \
+    -t robbyrussell \
+    -p git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python

@@ -1,4 +1,3 @@
-from operator import is_
 import os
 import subprocess
 from pathlib import Path
@@ -69,7 +68,6 @@ def init(
         "git_name": git_name,
         "git_email": git_email,
         "github_token": github_token,
-        "container_name": f"{project_name}-dev",
         "project_name": project_name,
         "wandb_project": project_name,
         "wandb_entity": git_name,  # default to git username

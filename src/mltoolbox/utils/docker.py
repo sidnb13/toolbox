@@ -85,11 +85,11 @@ def get_image_digest(image: str, remote: bool = False) -> str:
     return "none"
 
 
-def check_image_updates(project_name: str) -> bool:
+def check_base_image_updates() -> bool:
     """Check if image needs updating"""
     click.echo("🔍 Checking for updates...")
     git_name = os.getenv("GIT_NAME")
-    image = f"ghcr.io/{git_name}/{project_name}:latest"
+    image = f"ghcr.io/{git_name}/ml-base:latest"
 
     local_digest = get_image_digest(image)
     remote_digest = get_image_digest(image, remote=True)
@@ -104,18 +104,21 @@ def start_container(project_name: str) -> None:
     # Create network if it doesn't exist
     subprocess.run(["docker", "network", "create", "ray_network"], check=False)
 
+    # Build the project-specific image
+    click.echo("🏗️  Building project image...")
+    result = subprocess.run(["docker", "compose", "build"])
+    if result.returncode != 0:
+        raise click.ClickException("Failed to build project image")
+
     # Start container with docker compose
     result = subprocess.run(["docker", "compose", "up", "-d"])
     if result.returncode != 0:
         raise click.ClickException("Failed to start container")
 
     container_name = project_name.lower()
-    if (
-        subprocess.run(
-            ["docker", "ps", "-q", "-f", f"name={container_name}"]
-        ).returncode
-        == 0
-    ):
+    if subprocess.run(
+        ["docker", "ps", "-q", "-f", f"name={container_name}"]
+    ).returncode == 0:
         click.echo("✅ Container started successfully!")
 
         # Show GPU info

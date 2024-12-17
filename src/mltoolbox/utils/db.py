@@ -16,6 +16,7 @@ class Remote(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     alias: Mapped[str] = mapped_column(String, unique=True)
+    username: Mapped[str] = mapped_column(String)
     host: Mapped[str] = mapped_column(String)
     project_dir: Mapped[str] = mapped_column(String)
     git_name: Mapped[str] = mapped_column(String)
@@ -30,12 +31,22 @@ class DB:
     def __init__(self):
         config_dir = Path.home() / ".config" / "mltoolbox"
         config_dir.mkdir(parents=True, exist_ok=True)
+        db_file = config_dir / "mltoolbox.db"
 
-        self.engine = create_engine(f"sqlite:///{config_dir}/mltoolbox.db")
+        if db_file.exists():
+            try:
+                self.engine = create_engine(f"sqlite:///{db_file}")
+                with Session(self.engine) as session:
+                    session.query(Remote).first()
+            except Exception as e:
+                db_file.unlink()
+
+        self.engine = create_engine(f"sqlite:///{db_file}")
         Base.metadata.create_all(self.engine)
 
     def add_remote(
         self,
+        username: str,
         host: str,
         alias: Optional[str] = None,
         is_conda: bool = False,
@@ -43,16 +54,17 @@ class DB:
     ) -> Remote:
         project_dir = str(Path.cwd())
         git_name = os.getenv("GIT_NAME")
-        container_name = os.getenv("CONTAINER_NAME", Path.cwd().name)
+        container_name = os.getenv("PROJECT_NAME", Path.cwd().name) + "-dev"
 
         if not alias:
-            alias = host
+            alias = f"{username}@{host}"
 
         with Session(self.engine) as session:
             remote = session.query(Remote).filter_by(alias=alias).first()
             if remote is None:
                 remote = Remote(
                     alias=alias,
+                    username=username,
                     host=host,
                     project_dir=project_dir,
                     git_name=git_name,
@@ -62,6 +74,7 @@ class DB:
                 )
                 session.add(remote)
             else:
+                remote.username = username
                 remote.host = host
                 remote.project_dir = project_dir
                 remote.git_name = git_name

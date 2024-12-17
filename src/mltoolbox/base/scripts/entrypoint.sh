@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e  # Exit on error
 
+# Change to project directory if PROJECT_NAME is set
+if [ ! -z "${PROJECT_NAME}" ]; then
+    cd /workspace/${PROJECT_NAME}
+fi
+
 # Print system information
 echo "🖥️  Container System Information:"
 nvidia-smi
