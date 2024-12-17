@@ -13,7 +13,7 @@ from ..utils.templates import generate_project_files
 @click.option("--python-version", default="3.12", help="Python version")
 @click.option("--push", is_flag=True, default=True, help="Push image after building")
 def init_base(cuda_version: str, python_version: str, push: bool):
-    """Build the base ML image (run on Linux machine with NVIDIA GPU)"""
+    """Build the base image"""
     build_base_image(cuda_version, python_version, push)
 
 
@@ -23,9 +23,16 @@ def init_base(cuda_version: str, python_version: str, push: bool):
 @click.option("--cuda-version", default="12.1.0", help="CUDA version for base image")
 @click.option("--python-version", default="3.12", help="Python version")
 @click.option("--force", is_flag=True, help="Force overwrite existing files")
-@click.option("--inside-project", is_flag=True, help="Initialize inside existing project")
+@click.option(
+    "--inside-project", is_flag=True, help="Initialize inside existing project"
+)
 def init(
-    project_name: str, ray: bool, cuda_version: str, python_version: str, force: bool, inside_project: bool
+    project_name: str,
+    ray: bool,
+    cuda_version: str,
+    python_version: str,
+    force: bool,
+    inside_project: bool,
 ):
     """Initialize a new ML project"""
     project_dir = Path(project_name) if not inside_project else Path.cwd()

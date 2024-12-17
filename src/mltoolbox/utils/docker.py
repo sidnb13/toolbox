@@ -27,7 +27,13 @@ def check_docker_group() -> None:
 def cleanup_containers(project_name: str) -> None:
     """Cleanup existing containers and networks"""
     click.echo("🧹 Cleaning up existing containers...")
-    container_name = project_name.lower()
+
+    # Remove both platform variants
+    container_names = [
+        f"{project_name}-linux".lower(),
+        f"{project_name}-mac".lower(),
+        "ray-head",
+    ]
 
     # Kill any existing SSH tunnels
     if os.path.exists("/tmp/remote_tunnel.pid"):
@@ -35,7 +41,8 @@ def cleanup_containers(project_name: str) -> None:
         os.remove("/tmp/remote_tunnel.pid")
 
     # Remove containers and network
-    subprocess.run(["docker", "rm", "-f", container_name, "ray-head"], check=False)
+    for container in container_names:
+        subprocess.run(["docker", "rm", "-f", container], check=False)
     subprocess.run(["docker", "network", "rm", "ray_network"], check=False)
 
 
@@ -101,32 +108,64 @@ def start_container(project_name: str) -> None:
     """Start the development container"""
     click.echo("🚀 Launching container...")
 
-    # Create network if it doesn't exist
-    subprocess.run(["docker", "network", "create", "ray_network"], check=False)
+    # Determine platform-specific service name
+    is_arm_mac = platform.system() == "Darwin" and platform.machine() == "arm64"
+    platform_profile = "mac" if is_arm_mac else "linux"
+    service_name = f"{project_name}-{platform_profile}".lower()
+
+    result = subprocess.run(
+        [
+            "docker",
+            "network",
+            "ls",
+            "--filter",
+            "name=ray_network",
+            "--format",
+            "{{.Name}}",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if "ray_network" not in result.stdout:
+        subprocess.run(["docker", "network", "create", "ray_network"], check=False)
 
     # Build the project-specific image
-    click.echo("🏗️  Building project image...")
-    result = subprocess.run(["docker", "compose", "build"])
-    if result.returncode != 0:
-        raise click.ClickException("Failed to build project image")
-
-    # Start container with docker compose
-    result = subprocess.run(["docker", "compose", "up", "-d"])
+    click.echo("🏗️  Starting project image...")
+    result = subprocess.run(
+        ["docker", "compose", "--profile", platform_profile, "up", "-d", service_name]
+    )
     if result.returncode != 0:
         raise click.ClickException("Failed to start container")
 
-    container_name = project_name.lower()
-    if subprocess.run(
-        ["docker", "ps", "-q", "-f", f"name={container_name}"]
-    ).returncode == 0:
+    container_name = f"{project_name}-{platform_profile}".lower()
+    if (
+        subprocess.run(
+            ["docker", "ps", "-q", "-f", f"name={container_name}"]
+        ).returncode
+        == 0
+    ):
         click.echo("✅ Container started successfully!")
 
-        # Show GPU info
-        subprocess.run(["docker", "exec", container_name, "nvidia-smi", "--list-gpus"])
+        # Show GPU info only on Linux
+        if not is_arm_mac:
+            subprocess.run(
+                ["docker", "exec", container_name, "nvidia-smi", "--list-gpus"]
+            )
 
         # Connect to container
         click.echo("🔌 Connecting to container...")
-        os.execvp("docker", ["docker", "exec", "-it", container_name, "/bin/bash"])
+        os.execvp(
+            "docker",
+            [
+                "docker",
+                "exec",
+                "-it",
+                "-w",
+                f"/workspace/{project_name}",
+                container_name,
+                "/bin/bash",
+            ],
+        )
     else:
         click.echo("❌ Container failed to start")
         subprocess.run(["docker", "logs", container_name])
@@ -144,55 +183,93 @@ def build_base_image(cuda_version: str, python_version: str, push: bool = False)
 
     # Get GitHub credentials from environment
     git_name = os.getenv("GIT_NAME")
-    if not git_name:
-        raise click.ClickException("GIT_NAME environment variable not set")
+    github_token = os.getenv("GITHUB_TOKEN")
+    if not git_name or not github_token:
+        raise click.ClickException(
+            "GIT_NAME and GITHUB_TOKEN environment variables must be set"
+        )
 
-    image_name = f"ghcr.io/{git_name}/ml-base:latest"
-
-    # Check if running on ARM Mac
+    # Check platform and set version
     is_arm_mac = platform.system() == "Darwin" and platform.machine() == "arm64"
-    if is_arm_mac:
-        click.echo("⚠️  Detected ARM Mac - cannot build CUDA image locally")
-        if click.confirm("Would you like to pull the pre-built image instead?"):
-            # Try to pull existing image
-            result = subprocess.run(["docker", "pull", image_name])
-            if result.returncode != 0:
-                raise click.ClickException(
-                    f"Failed to pull image. Please build this image on a Linux machine with NVIDIA GPU and push to {image_name}"
-                )
-            click.echo("✅ Successfully pulled base image")
-            return
-        else:
-            click.echo("\nTo build this image:")
-            click.echo(f"1. SSH into a Linux machine with NVIDIA GPU")
-            click.echo(
-                f"2. Run: mltoolbox init-base --cuda-version {cuda_version} --python-version {python_version} --push"
-            )
-            click.echo(f"3. The image will be pushed to: {image_name}")
-            return
+    dockerfile = "Dockerfile.mac" if is_arm_mac else "Dockerfile"
+    platform_tag = "mac" if is_arm_mac else "linux"
 
-    click.echo(f"🏗️  Building base image: {image_name}")
+    # Get package version from pyproject.toml
+    import tomli
+
+    with open(Path(__file__).parent.parent.parent.parent / "pyproject.toml", "rb") as f:
+        version = tomli.load(f)["project"]["version"]
+
+    # Define image names with versioning
+    base_name = f"ghcr.io/{git_name}/ml-base"
+    image_tags = [
+        f"{base_name}:{platform_tag}-{version}",  # Versioned platform tag
+        f"{base_name}:{platform_tag}-latest",  # Latest platform tag
+    ]
+
+    # Try to pull latest image first
+    click.echo("🔄 Checking for existing image...")
+    pull_result = subprocess.run(
+        ["docker", "pull", f"{base_name}:{platform_tag}-latest"], capture_output=True
+    )
+
+    if pull_result.returncode == 0:
+        click.echo("✅ Found existing image, will use as cache")
+    else:
+        click.echo("⚠️  No existing image found, building from scratch")
+
+    # Login if pushing
+    if push:
+        click.echo("🔑 Logging in to GitHub Container Registry...")
+        login_result = subprocess.run(
+            ["docker", "login", "ghcr.io", "-u", git_name, "--password-stdin"],
+            input=github_token.encode(),
+            capture_output=True,
+        )
+        if login_result.returncode != 0:
+            raise click.ClickException(
+                f"Failed to login to ghcr.io: {login_result.stderr.decode()}"
+            )
 
     # Build the image
-    result = subprocess.run(
+    click.echo(f"🏗️  Building base image v{version} for {platform_tag}")
+
+    build_args = [
+        "docker",
+        "build",
+        "--pull",  # Always check for updated base images
+        "--cache-from",
+        f"{base_name}:{platform_tag}-latest",
+    ]
+
+    # Add tags
+    for tag in image_tags:
+        build_args.extend(["-t", tag])
+
+    # Add build args
+    build_args.extend(
         [
-            "docker",
-            "build",
-            "-t",
-            image_name,
-            "--build-arg",
-            f"CUDA_VERSION={cuda_version}",
+            "-f",
+            str(base_dir / dockerfile),
             "--build-arg",
             f"PYTHON_VERSION={python_version}",
             str(base_dir),
         ]
     )
 
+    if not is_arm_mac:
+        build_args.extend(["--build-arg", f"CUDA_VERSION={cuda_version}"])
+
+    result = subprocess.run(build_args)
     if result.returncode != 0:
         raise click.ClickException("Failed to build base image")
 
     if push:
         click.echo("📤 Pushing base image...")
-        result = subprocess.run(["docker", "push", image_name])
-        if result.returncode != 0:
-            raise click.ClickException("Failed to push base image")
+        for tag in image_tags:
+            result = subprocess.run(["docker", "push", tag])
+            if result.returncode != 0:
+                raise click.ClickException(f"Failed to push {tag}")
+
+        # Logout after push
+        subprocess.run(["docker", "logout", "ghcr.io"], check=False)

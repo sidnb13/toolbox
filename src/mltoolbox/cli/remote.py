@@ -89,7 +89,7 @@ def connect(host_or_alias, alias, username, mode, env_name, force_rebuild, silen
                 subprocess.run(["ssh", f"{username}@{host}", cmd], check=False)
 
         # Check if container is already running
-        container_name = f"{project_name}-dev"
+        container_name = project_name.lower()
         check_container = f"docker ps -q -f name={container_name}"
 
         result = subprocess.run(

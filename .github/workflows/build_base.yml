@@ -1,4 +1,4 @@
-name: Build Base Image
+name: Build Base Images
 
 on:
   workflow_dispatch:
@@ -11,7 +11,6 @@ on:
 permissions:
   contents: read
   packages: write
-  # Add these permissions for complete GitHub Actions access
   actions: write
   checks: write
   deployments: write
@@ -20,7 +19,7 @@ permissions:
   statuses: write
 
 jobs:
-  build:
+  build-linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +50,13 @@ jobs:
         with:
           platforms: linux/amd64
 
-      - name: Build and push base image
+      - name: Get Version
+        id: version
+        run: |
+          VERSION=$(python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and push Linux base image
         uses: docker/build-push-action@v5
         with:
           context: src/mltoolbox/base
@@ -59,7 +64,9 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/ml-base:latest
-            ghcr.io/${{ github.repository_owner }}/ml-base:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/ml-base:linux
+            ghcr.io/${{ github.repository_owner }}/ml-base:linux-${{ steps.version.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/ml-base:linux-${{ github.sha }}
           build-args: |
             CUDA_VERSION=12.1.0
             PYTHON_VERSION=3.12
@@ -71,3 +78,50 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.platform=linux
+
+  build-mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/arm64
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get Version
+        id: version
+        run: |
+          VERSION=$(python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and push macOS base image
+        uses: docker/build-push-action@v5
+        with:
+          context: src/mltoolbox/base
+          file: src/mltoolbox/base/Dockerfile.mac
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ml-base:latest
+            ghcr.io/${{ github.repository_owner }}/ml-base:mac
+            ghcr.io/${{ github.repository_owner }}/ml-base:mac-${{ steps.version.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/ml-base:mac-${{ github.sha }}
+          build-args: |
+            PYTHON_VERSION=3.12
+              GIT_EMAIL=${{ github.event.repository.owner.email || github.actor }}@users.noreply.github.com
+              GIT_NAME=${{ github.repository_owner }}
+            cache-from: type=gha
+            cache-to: type=gha,mode=max
+            platforms: linux/arm64
+            labels: |
+              org.opencontainers.image.source=https://github.com/${{ github.repository }}
+              org.opencontainers.image.revision=${{ github.sha }}
+              org.opencontainers.image.platform=mac

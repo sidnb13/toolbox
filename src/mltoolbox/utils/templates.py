@@ -1,8 +1,8 @@
+import platform
 from pathlib import Path
 
 import pkg_resources
 from jinja2 import Environment, PackageLoader, select_autoescape
-
 
 
 def parse_requirement(req: str) -> str:
@@ -96,6 +96,7 @@ def generate_project_files(
     (project_dir / "src").mkdir(exist_ok=True)
     (project_dir / "tests").mkdir(exist_ok=True)
     (project_dir / "assets").mkdir(exist_ok=True)
+    (project_dir / ".devcontainer").mkdir(exist_ok=True)
 
     base_entrypoint = Path(
         pkg_resources.resource_filename("mltoolbox", "base/scripts/entrypoint.sh")
@@ -104,21 +105,30 @@ def generate_project_files(
     project_entrypoint.write_bytes(base_entrypoint.read_bytes())
     project_entrypoint.chmod(0o755)  # Make executable
 
-    # Template context with all variables
+    is_arm_mac = platform.system() == "Darwin" and platform.machine() == "arm64"
+    platform_name = "darwin" if is_arm_mac else "linux"
+
     context = {
         "project_name": project_name,
         "ray": ray,
-        "container_name": f"{project_name}-dev",  # Add this line
-        **env_vars,  # Include all env vars in template context
+        "platform": platform_name,
+        "container_name": project_name.lower(),
+        **env_vars,
     }
+
+    # Generate devcontainer.json
+    devcontainer = render_template("devcontainer.json.j2", **context)
+    (project_dir / ".devcontainer" / "devcontainer.json").write_text(devcontainer)
 
     # Generate docker-compose.yml
     docker_compose = render_template("docker-compose.yml.j2", **context)
     (project_dir / "docker-compose.yml").write_text(docker_compose)
 
-    # Generate Dockerfile
+    # Generate Dockerfiles
     dockerfile = render_template("Dockerfile.j2", **context)
     (project_dir / "Dockerfile").write_text(dockerfile)
+    dockerfile = render_template("Dockerfile.mac.j2", **context)
+    (project_dir / "Dockerfile.mac").write_text(dockerfile)
 
     # Generate .env from template first, then merge with existing
     env_template = render_template(".env.j2", **context)
