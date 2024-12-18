@@ -59,11 +59,28 @@ jobs:
         with:
           platforms: linux/amd64
 
-      - name: Get Version
-        id: version
+      - name: Get Version and Metadata
+        id: meta
         run: |
           VERSION=$(python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          PYTHON_VERSION="3.12"
+          CUDA_VERSION="12.1.0"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "python_version=$PYTHON_VERSION" >> $GITHUB_OUTPUT
+          echo "cuda_version=$CUDA_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Docker meta
+        id: docker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/ml-base
+          tags: |
+            type=raw,value=linux-latest
+            type=raw,value=linux
+            type=raw,value=linux-${{ steps.meta.outputs.version }}
+            type=raw,value=linux-py${{ steps.meta.outputs.python_version }}-cuda${{ steps.meta.outputs.cuda_version }}
+            type=raw,value=linux-py${{ steps.meta.outputs.python_version }}-cuda${{ steps.meta.outputs.cuda_version }}-${{ steps.meta.outputs.version }}
+            type=sha
 
       - name: Build and push Linux base image
         uses: docker/build-push-action@v5
@@ -71,11 +88,7 @@ jobs:
           context: src/mltoolbox/base
           file: src/mltoolbox/base/Dockerfile
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/ml-base:latest
-            ghcr.io/${{ github.repository_owner }}/ml-base:linux
-            ghcr.io/${{ github.repository_owner }}/ml-base:linux-${{ steps.version.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/ml-base:linux-${{ github.sha }}
+          tags: ${{ steps.docker_meta.outputs.tags }}
           build-args: |
             CUDA_VERSION=12.1.0
             PYTHON_VERSION=3.12
@@ -126,17 +139,26 @@ jobs:
           VERSION=$(python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      - name: Docker meta
+        id: docker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/ml-base
+          tags: |
+            type=raw,value=mac-latest
+            type=raw,value=mac-${{ steps.meta.outputs.version }}
+            type=raw,value=mac-py${{ steps.meta.outputs.python_version }}
+            type=raw,value=mac-py${{ steps.meta.outputs.python_version }}-${{ steps.meta.outputs.version }}
+            type=sha,prefix=mac-
+
       - name: Build and push macOS base image
         uses: docker/build-push-action@v5
         with:
           context: src/mltoolbox/base
           file: src/mltoolbox/base/Dockerfile.mac
           push: ${{ !env.ACT }}
-          platforms: linux/arm64
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/ml-base:mac
-            ghcr.io/${{ github.repository_owner }}/ml-base:mac-${{ steps.version.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/ml-base:mac-${{ github.sha }}
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
           build-args: |
             GIT_EMAIL=${{ github.event.repository.owner.email || github.actor }}@users.noreply.github.com
             GIT_NAME=${{ github.repository_owner }}

@@ -54,7 +54,7 @@ class DB:
     ) -> Remote:
         project_dir = str(Path.cwd())
         git_name = os.getenv("GIT_NAME")
-        container_name = os.getenv("PROJECT_NAME", Path.cwd().name) + "-dev"
+        container_name = os.getenv("PROJECT_NAME", Path.cwd().name)
 
         if not alias:
             alias = f"{username}@{host}"

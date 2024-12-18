@@ -5,10 +5,9 @@ from pathlib import Path
 
 import click
 
-from mltoolbox.utils.db import DB
-
+from ..utils.db import DB
+from ..utils.docker import cleanup_containers, verify_env_vars
 from ..utils.remote import (
-    check_tunnel_active,
     cleanup_tunnels,
     setup_conda_env,
     setup_ssh_tunnel,
@@ -46,6 +45,8 @@ def connect(host_or_alias, alias, username, mode, env_name, force_rebuild, silen
         if not silent:
             click.echo(msg)
 
+    verify_env_vars()
+
     db = DB()
     project_name = Path.cwd().name
 
@@ -58,121 +59,56 @@ def connect(host_or_alias, alias, username, mode, env_name, force_rebuild, silen
         host = host_or_alias
         remote = db.add_remote(username, host, alias, mode == "conda", env_name)
 
-    # Check if tunnel is needed and active
-    if not check_tunnel_active():
-        log("🔄 Setting up SSH tunnel...")
-        cleanup_tunnels()
-        setup_ssh_tunnel(username, host)
+    project_name = Path.cwd().name
 
     log("📦 Syncing project files...")
     sync_project(username, host, project_name)
 
     if mode == "container":
-        # Check if docker group setup is needed
-        check_docker = "groups | grep -q docker"
-        result = subprocess.run(
-            ["ssh", f"{username}@{host}", check_docker],
-            capture_output=True,
-            check=False,
+        # Clean up any existing containers
+        cleanup_containers(project_name)
+
+        # Clean up any existing tunnels
+        cleanup_tunnels()
+
+        # Setup SSH tunnel for remote access
+        log("🔧 Setting up SSH tunnel...")
+        setup_ssh_tunnel(username, host)
+
+        # Sync project files
+        log("📦 Syncing project files...")
+        sync_project(username, host, project_name)
+
+        # Start the container on the remote host
+        log("🚀 Starting remote container...")
+        ssh_cmd = (
+            f"cd ~/projects/{project_name} && docker compose --profile linux up -d"
         )
+        subprocess.run(["ssh", f"{username}@{host}", ssh_cmd], check=True)
 
-        if result.returncode != 0:
-            log("🔧 Setting up docker permissions...")
-            setup_commands = [
-                "sudo groupadd -f docker",
-                f"sudo usermod -aG docker {username}",
-                "sudo systemctl restart docker",
-                "newgrp docker",
-            ]
+        log("✅ Remote environment ready!")
 
-            for cmd in setup_commands:
-                subprocess.run(["ssh", f"{username}@{host}", cmd], check=False)
-
-        # Check if container is already running
-        container_name = project_name.lower()
-        check_container = f"docker ps -q -f name={container_name}"
-
-        result = subprocess.run(
-            ["ssh", f"{username}@{host}", check_container],
-            capture_output=True,
-            text=True,
+        # Connect to the container
+        container_name = f"{project_name}-linux".lower()
+        exec_cmd = (
+            f"docker exec -it -w /workspace/{project_name} {container_name} /bin/bash"
         )
-
-        if not result.stdout.strip() or force_rebuild:
-            log("🚀 Starting container on remote...")
-            remote_commands = [
-                f"cd ~/projects/{project_name}",
-                "set -a",  # Auto-export all variables
-                f"export PROJECT_NAME={project_name}",
-                "source .env",
-                "set +a",
-                f"docker compose build \
-                    --build-arg GIT_NAME='{os.getenv('GIT_NAME')}' \
-                    --build-arg GIT_EMAIL='{os.getenv('GIT_EMAIL')}' \
-                    --build-arg PROJECT_NAME='{project_name}'",
-                "docker compose up -d",
-                f"docker exec -it {container_name} /bin/bash",
-            ]
-        else:
-            remote_commands = [
-                f"cd ~/projects/{project_name}",
-                "source .env",
-                f"docker exec -it {container_name} /bin/bash",
-            ]
-
-        cmd = " && ".join(remote_commands)
-
-        os.execvp(
-            "ssh",
-            [
-                "ssh",
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-A",
-                "-t",
-                f"{username}@{host}",
-                cmd,
-            ],
-        )
+        os.execvp("ssh", ["ssh", "-t", f"{username}@{host}", exec_cmd])
 
     elif mode == "conda":
-        # Check if conda env exists
-        check_env = f"conda env list | grep '{env_name}'"
-        result = subprocess.run(
-            ["ssh", f"{username}@{host}", check_env], capture_output=True
-        )
+        # Clean up any existing tunnels
+        cleanup_tunnels()
 
-        if result.returncode != 0:
-            log("🔧 Setting up conda environment...")
-            setup_conda_env(username, host, env_name)
+        # Setup conda environment
+        log("🔧 Setting up conda environment...")
+        setup_conda_env(username, host, env_name)
 
-        os.execvp(
-            "ssh",
-            [
-                "ssh",
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-A",
-                "-t",
-                f"{username}@{host}",
-                f"cd ~/projects/{project_name} && conda activate {env_name} && bash",
-            ],
-        )
+        # Connect to conda environment
+        conda_cmd = f"cd ~/projects/{project_name} && conda activate {env_name} && bash"
+        os.execvp("ssh", ["ssh", "-t", f"{username}@{host}", conda_cmd])
 
-    else:  # ssh mode
-        log("🔌 Connecting to remote shell...")
-        os.execvp(
-            "ssh",
-            [
-                "ssh",
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-A",
-                "-t",
-                f"{username}@{host}",
-                f"cd ~/projects/{project_name} && bash",
-            ],
-        )
+    else:
+        raise click.ClickException(f"Invalid mode: {mode}")
 
 
 @remote.command()
