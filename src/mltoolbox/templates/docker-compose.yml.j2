@@ -1,8 +1,8 @@
 services:
   "{{ project_name | lower }}-linux":
     restart: always
-    container_name: ${CONTAINER_NAME}
-    image: ${CONTAINER_NAME}:latest  # Local project image
+    container_name: ${CONTAINER_NAME}-linux
+    image: ${CONTAINER_NAME}-linux:latest  # Local project image
     env_file: .env
     profiles: ["linux"]
     build:
@@ -98,3 +98,11 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: always
+
+  ngrok:
+    image: ngrok/ngrok
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command: "http --domain=${NGROK_DOMAIN} host.docker.internal:8265"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # for Linux

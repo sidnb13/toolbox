@@ -5,6 +5,8 @@ from pathlib import Path
 
 import click
 
+from .helpers import RemoteConfig, remote_cmd
+
 
 def check_tunnel_active(ports=[8765, 6380, 10001]) -> bool:
     """Check if SSH tunnel is active and working"""
@@ -49,7 +51,7 @@ def cleanup_tunnels():
             pass
 
 
-def setup_ssh_tunnel(username: str, host: str) -> None:
+def setup_ssh_tunnel(remote_config: RemoteConfig) -> None:
     """Setup SSH tunnel for remote development"""
     click.echo("🔍 Checking for existing tunnels...")
 
@@ -89,7 +91,7 @@ def setup_ssh_tunnel(username: str, host: str) -> None:
             "6380:localhost:6380",
             "-L",
             "10001:localhost:10001",
-            f"{username}@{host}",
+            f"{remote_config.username}@{remote_config.host}",
         ]
     )
 
@@ -166,20 +168,14 @@ def setup_conda_env(username: str, host: str, env_name: str = None) -> None:
     )
 
 
-def sync_project(username: str, host: str, project_name: str) -> None:
+def sync_project(remote_config: RemoteConfig, project_name: str) -> None:
     """Sync project files with remote host"""
 
     project_root = Path.cwd()
     # Create remote directories
-    subprocess.run(
-        [
-            "ssh",
-            "-o",
-            "StrictHostKeyChecking=no",
-            f"{username}@{host}",
-            f"mkdir -p ~/.config/{project_name} ~/projects/{project_name}",
-        ],
-        check=True,
+    remote_cmd(
+        remote_config,
+        ["mkdir", "-p", f"~/.config/{project_name}", f"~/projects/{project_name}"],
     )
 
     # Sync project files
@@ -199,7 +195,7 @@ def sync_project(username: str, host: str, project_name: str) -> None:
             "--exclude",
             "*.egg-info",
             f"{project_root}/",
-            f"ubuntu@{host}:~/projects/{project_name}/",
+            f"{remote_config.username}@{remote_config.host}:~/projects/{project_name}/",
         ],
         check=True,
     )

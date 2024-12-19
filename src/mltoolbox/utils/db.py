@@ -3,7 +3,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, String, create_engine
+from sqlalchemy import Boolean, DateTime, String, create_engine, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 
@@ -44,6 +45,36 @@ class DB:
         self.engine = create_engine(f"sqlite:///{db_file}")
         Base.metadata.create_all(self.engine)
 
+        self.cleanup_duplicates()
+
+    def cleanup_duplicates(self):
+        """Remove duplicate remote entries that have the same host, username, and project_dir."""
+        with Session(self.engine) as session:
+            # Find all duplicates based on unique combination of fields
+            subquery = (
+                session.query(
+                    Remote.host,
+                    Remote.username,
+                    Remote.project_dir,
+                    func.min(Remote.created_at).label('min_created')
+                )
+                .group_by(Remote.host, Remote.username, Remote.project_dir)
+                .having(func.count('*') > 1)
+                .subquery()
+            )
+
+            # Delete all duplicates except the oldest one
+            duplicates = session.query(Remote).join(
+                subquery,
+                (Remote.host == subquery.c.host) &
+                (Remote.username == subquery.c.username) &
+                (Remote.project_dir == subquery.c.project_dir) &
+                (Remote.created_at != subquery.c.min_created)
+            ).all()
+            for duplicate in duplicates:
+                session.delete(duplicate)
+            session.commit()
+
     def add_remote(
         self,
         username: str,
@@ -57,7 +88,30 @@ class DB:
         container_name = os.getenv("PROJECT_NAME", Path.cwd().name)
 
         if not alias:
-            alias = f"{username}@{host}"
+            with Session(self.engine) as session:
+                while True:
+                    # Lock the table to prevent concurrent reads
+                    max_alias = (
+                        session.query(func.max(Remote.alias))
+                        .filter(Remote.alias.like("mltoolbox-%"))
+                        .filter(Remote.alias.regexp_match(r"mltoolbox-\d+$"))
+                        .scalar()
+                    )
+
+                    if not max_alias:
+                        alias = "mltoolbox-1"
+                    else:
+                        current_num = int(max_alias.split("-")[1])
+                        alias = f"mltoolbox-{current_num + 1}"
+
+                    try:
+                        # Try to insert with the new alias - if it fails due to duplicate,
+                        # the transaction will rollback and we'll try again
+                        session.flush()
+                        break
+                    except IntegrityError:
+                        session.rollback()
+                        continue
 
         with Session(self.engine) as session:
             remote = session.query(Remote).filter_by(alias=alias).first()
@@ -85,6 +139,7 @@ class DB:
 
             session.commit()
 
+            session.refresh(remote)
             return remote
 
     def get_remote(self, alias: str) -> Remote:

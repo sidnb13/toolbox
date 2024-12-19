@@ -93,8 +93,6 @@ def generate_project_files(
     """Generate project files from templates"""
     # Create directory structure
     (project_dir / "scripts").mkdir(exist_ok=True)
-    (project_dir / "src").mkdir(exist_ok=True)
-    (project_dir / "tests").mkdir(exist_ok=True)
     (project_dir / "assets").mkdir(exist_ok=True)
     (project_dir / ".devcontainer").mkdir(exist_ok=True)
 

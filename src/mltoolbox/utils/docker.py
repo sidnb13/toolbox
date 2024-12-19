@@ -1,161 +1,182 @@
 import grp
-import importlib.resources as pkg_resources
 import os
 import platform
 import pwd
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 import click
+import pkg_resources
 
 from .. import base
+from .helpers import RemoteConfig, remote_cmd
 
 
-def check_docker_group() -> None:
-    """Check if user is in docker group and add if not"""
-    username = pwd.getpwuid(os.getuid()).pw_name
-    try:
-        if "docker" not in [g.gr_name for g in grp.getgrall() if username in g.gr_mem]:
-            click.echo("👥 Adding user to docker group...")
-            subprocess.run(["sudo", "adduser", username, "docker"], check=True)
-            os.execvp("sg", ["sg", "docker", "-c", f'"{" ".join(sys.argv)}"'])
-    except subprocess.CalledProcessError:
-        raise click.ClickException("Failed to add user to docker group")
+def check_docker_group(remote: Optional[RemoteConfig] = None) -> None:
+    if remote:
+        try:
+            remote_cmd(
+                remote, ["groups | grep docker || sudo usermod -aG docker $USER"]
+            )
+        except subprocess.CalledProcessError:
+            raise click.ClickException(
+                "Failed to add user to docker group on remote host"
+            )
+    else:
+        username = pwd.getpwuid(os.getuid()).pw_name
+        try:
+            if "docker" not in [
+                g.gr_name for g in grp.getgrall() if username in g.gr_mem
+            ]:
+                subprocess.run(["sudo", "adduser", username, "docker"], check=True)
+                os.execvp("sg", ["sg", "docker", "-c", f'"{" ".join(sys.argv)}"'])
+        except subprocess.CalledProcessError:
+            raise click.ClickException("Failed to add user to docker group")
 
 
-def cleanup_containers(project_name: str) -> None:
-    """Cleanup existing containers and networks"""
-    click.echo("🧹 Cleaning up existing containers...")
-
-    # Remove both platform variants
+def cleanup_containers(
+    project_name: str, remote: Optional[RemoteConfig] = None
+) -> None:
     container_names = [
         f"{project_name}-linux".lower(),
         f"{project_name}-mac".lower(),
         "ray-head",
     ]
 
-    # Kill any existing SSH tunnels
-    if os.path.exists("/tmp/remote_tunnel.pid"):
-        subprocess.run(["pkill", "-F", "/tmp/remote_tunnel.pid"], check=False)
-        os.remove("/tmp/remote_tunnel.pid")
-
-    # Remove containers and network
-    for container in container_names:
-        subprocess.run(["docker", "rm", "-f", container], check=False)
-    subprocess.run(["docker", "network", "rm", "ray_network"], check=False)
-
-
-def verify_env_vars() -> None:
-    """Verify required environment variables are set"""
-    env_file = Path.cwd() / ".env"
-    if not env_file.exists():
-        raise click.ClickException("❌ .env file not found")
-
-    required_vars = ["GIT_NAME", "GITHUB_TOKEN", "GIT_EMAIL"]
-    missing_vars = [var for var in required_vars if not os.getenv(var)]
-
-    if missing_vars:
-        raise click.ClickException(
-            f"❌ Required environment variables not set: {', '.join(missing_vars)}"
+    def docker_cmd(cmd):
+        return (
+            remote_cmd(remote, cmd)
+            if remote
+            else subprocess.run(cmd, check=False, capture_output=True, text=True)
         )
 
+    # First check which containers are running
+    ps_result = docker_cmd(["docker", "ps"])
+    if ps_result.returncode == 0:
+        running_containers = ps_result.stdout.strip().split("\n")
+    else:
+        running_containers = []
 
-def get_image_digest(image: str, remote: bool = False) -> str:
-    """Get image digest (local or remote)"""
+    # Only remove containers that aren't running
+    containers_removed = False
+    for container in container_names:
+        if container not in running_containers:
+            result = docker_cmd(["docker", "rm", "-f", container])
+            if result.returncode == 0:
+                containers_removed = True
+                click.echo(f"Removed stopped container: {container}")
+
+    # Only remove the network if we removed containers and it exists
+    if containers_removed:
+        network_result = docker_cmd(["docker", "network", "ls", "--format={{.Name}}"])
+        if network_result.returncode == 0 and "ray_network" in network_result.stdout:
+            network_rm_result = docker_cmd(["docker", "network", "rm", "ray_network"])
+            if network_rm_result.returncode == 0:
+                click.echo("Removed ray_network")
+
+
+def verify_env_vars(remote: Optional[RemoteConfig] = None) -> None:
+    required_vars = ["GIT_NAME", "GITHUB_TOKEN", "GIT_EMAIL"]
+
     if remote:
-        # Login to ghcr.io
+        cmd = [
+            f'test -f .env && source .env && [ ! -z "${var}" ]' for var in required_vars
+        ]
+        try:
+            remote_cmd(remote, [" && ".join(cmd)])
+        except subprocess.CalledProcessError:
+            raise click.ClickException(
+                f"Required environment variables not set on remote: {', '.join(required_vars)}"
+            )
+    else:
+        if not Path.cwd().joinpath(".env").exists():
+            raise click.ClickException("❌ .env file not found")
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+        if missing_vars:
+            raise click.ClickException(
+                f"Required environment variables not set: {', '.join(missing_vars)}"
+            )
+
+
+def get_image_digest(
+    image: str, remote: bool = False, remote_config: Optional[RemoteConfig] = None
+) -> str:
+    def docker_cmd(cmd):
+        return (
+            remote_cmd(remote_config, cmd)
+            if remote_config
+            else subprocess.run(cmd, capture_output=True, text=True)
+        )
+
+    if remote:
         git_name = os.getenv("GIT_NAME")
         github_token = os.getenv("GITHUB_TOKEN")
-        subprocess.run(
-            ["docker", "login", "ghcr.io", "-u", git_name, "--password-stdin"],
-            input=github_token.encode(),
-            capture_output=True,
-        )
+        docker_cmd(
+            ["docker", "login", "ghcr.io", "-u", git_name, "--password-stdin"]
+        ).input = github_token.encode()
 
-        result = subprocess.run(
-            ["docker", "manifest", "inspect", image], capture_output=True, text=True
-        )
+        result = docker_cmd(["docker", "manifest", "inspect", image])
         if result.returncode == 0:
             for line in result.stdout.splitlines():
                 if '"digest":' in line:
                     return line.split(":")[2].strip(' ",')
     else:
-        result = subprocess.run(
-            ["docker", "image", "inspect", image, "--format={{index .Id}}"],
-            capture_output=True,
-            text=True,
+        result = docker_cmd(
+            ["docker", "image", "inspect", image, "--format={{index .Id}}"]
         )
         if result.returncode == 0:
             return result.stdout.strip().split(":")[1]
-
     return "none"
 
 
-def check_base_image_updates() -> bool:
-    """Check if image needs updating"""
-    click.echo("🔍 Checking for updates...")
-    git_name = os.getenv("GIT_NAME")
-    image = f"ghcr.io/{git_name}/ml-base:latest"
+def start_container(
+    project_name: str, remote_config: Optional[RemoteConfig] = None
+) -> None:
+    def cmd_wrap(cmd, interactive=False):
+        return (
+            remote_cmd(remote_config, cmd, interactive=interactive)
+            if remote_config
+            else subprocess.run(cmd)
+            if not interactive
+            else os.execvp(cmd)
+        )
 
-    local_digest = get_image_digest(image)
-    remote_digest = get_image_digest(image, remote=True)
-
-    return local_digest != remote_digest
-
-
-def start_container(project_name: str) -> None:
-    """Start the development container"""
-    click.echo("🚀 Launching container...")
-
-    # Determine platform-specific service name
-    is_arm_mac = platform.system() == "Darwin" and platform.machine() == "arm64"
+    is_arm_mac = (
+        platform.system() == "Darwin" and platform.machine() == "arm64"
+        if not remote_config
+        else False
+    )
     platform_profile = "mac" if is_arm_mac else "linux"
     service_name = f"{project_name}-{platform_profile}".lower()
 
-    result = subprocess.run(
-        [
-            "docker",
-            "network",
-            "ls",
-            "--filter",
-            "name=ray_network",
-            "--format",
-            "{{.Name}}",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if "ray_network" not in result.stdout:
-        subprocess.run(["docker", "network", "create", "ray_network"], check=False)
-
-    # Build the project-specific image
-    click.echo("🏗️  Starting project image...")
-    result = subprocess.run(
-        ["docker", "compose", "--profile", platform_profile, "up", "-d", service_name]
-    )
-    if result.returncode != 0:
-        raise click.ClickException("Failed to start container")
-
     container_name = f"{project_name}-{platform_profile}".lower()
+
+    try:
+        inspect_result = cmd_wrap(
+            [
+                "docker",
+                "container",
+                "inspect",
+                "-f",
+                "'{{.State.Running}}'",
+                container_name,
+            ]
+        )
+        if not isinstance(inspect_result, subprocess.CompletedProcess):
+            inspect_result.returncode = inspect_result.wait()
+    except Exception:
+        inspect_result = type("CompletedProcess", (), {"returncode": 1, "stdout": ""})()
+
     if (
-        subprocess.run(
-            ["docker", "ps", "-q", "-f", f"name={container_name}"]
-        ).returncode
-        == 0
+        inspect_result.returncode == 0
+        and "true" in inspect_result.stdout.strip().lower()
     ):
-        click.echo("✅ Container started successfully!")
-
-        # Show GPU info only on Linux
         if not is_arm_mac:
-            subprocess.run(
-                ["docker", "exec", container_name, "nvidia-smi", "--list-gpus"]
-            )
+            cmd_wrap(["docker", "exec", container_name, "nvidia-smi", "--list-gpus"])
 
-        # Connect to container
-        click.echo("🔌 Connecting to container...")
-        os.execvp(
-            "docker",
+        cmd_wrap(
             [
                 "docker",
                 "exec",
@@ -165,15 +186,51 @@ def start_container(project_name: str) -> None:
                 container_name,
                 "/bin/bash",
             ],
+            interactive=True,
         )
     else:
-        click.echo("❌ Container failed to start")
-        subprocess.run(["docker", "logs", container_name])
-        raise click.ClickException("Container startup failed")
+        network_ls_result = cmd_wrap(["docker", "network", "ls", "--format={{.Name}}"])
+        if (
+            network_ls_result.returncode == 0
+            and "ray_network" not in network_ls_result.stdout
+        ):
+            cmd_wrap(["docker", "network", "create", "ray_network"])
+        result = cmd_wrap(
+            [
+                "docker",
+                "compose",
+                "--profile",
+                platform_profile,
+                "up",
+                "-d",
+                service_name,
+            ],
+        )
+        if result.returncode != 0:
+            cmd_wrap(["docker", "logs", container_name])
+            raise click.ClickException("Failed to start container")
+
+        cmd_wrap(
+            [
+                "docker",
+                "exec",
+                "-it",
+                "-w",
+                f"/workspace/{project_name}",
+                container_name,
+                "/bin/bash",
+            ],
+            interactive=True,
+        )
 
 
-def build_base_image(cuda_version: str, python_version: str, push: bool = False):
-    """Build the base ML image"""
+def build_base_image(
+    cuda_version: str,
+    python_version: str,
+    push: bool = False,
+    remote: Optional[RemoteConfig] = None,
+):
+    """Build the base ML image locally or on a remote host"""
     # Get base directory from package resources
     with pkg_resources.path(base, "Dockerfile") as base_dockerfile:
         base_dir = base_dockerfile.parent
@@ -190,7 +247,11 @@ def build_base_image(cuda_version: str, python_version: str, push: bool = False)
         )
 
     # Check platform and set version
-    is_arm_mac = platform.system() == "Darwin" and platform.machine() == "arm64"
+    is_arm_mac = (
+        platform.system() == "Darwin" and platform.machine() == "arm64"
+        if not remote
+        else False
+    )
     dockerfile = "Dockerfile.mac" if is_arm_mac else "Dockerfile"
     platform_tag = "mac" if is_arm_mac else "linux"
 
@@ -207,12 +268,15 @@ def build_base_image(cuda_version: str, python_version: str, push: bool = False)
         f"{base_name}:{platform_tag}-latest",  # Latest platform tag
     ]
 
+    def docker_cmd(cmd, input_data=None):
+        if remote:
+            return remote_cmd(remote, cmd)
+        else:
+            return subprocess.run(cmd, input=input_data, capture_output=True, text=True)
+
     # Try to pull latest image first
     click.echo("🔄 Checking for existing image...")
-    pull_result = subprocess.run(
-        ["docker", "pull", f"{base_name}:{platform_tag}-latest"], capture_output=True
-    )
-
+    pull_result = docker_cmd(["docker", "pull", f"{base_name}:{platform_tag}-latest"])
     if pull_result.returncode == 0:
         click.echo("✅ Found existing image, will use as cache")
     else:
@@ -221,14 +285,13 @@ def build_base_image(cuda_version: str, python_version: str, push: bool = False)
     # Login if pushing
     if push:
         click.echo("🔑 Logging in to GitHub Container Registry...")
-        login_result = subprocess.run(
+        login_result = docker_cmd(
             ["docker", "login", "ghcr.io", "-u", git_name, "--password-stdin"],
-            input=github_token.encode(),
-            capture_output=True,
+            github_token.encode() if not remote else None,
         )
         if login_result.returncode != 0:
             raise click.ClickException(
-                f"Failed to login to ghcr.io: {login_result.stderr.decode()}"
+                f"Failed to login to ghcr.io: {login_result.stderr}"
             )
 
     # Build the image
@@ -260,16 +323,16 @@ def build_base_image(cuda_version: str, python_version: str, push: bool = False)
     if not is_arm_mac:
         build_args.extend(["--build-arg", f"CUDA_VERSION={cuda_version}"])
 
-    result = subprocess.run(build_args)
+    result = docker_cmd(build_args)
     if result.returncode != 0:
         raise click.ClickException("Failed to build base image")
 
     if push:
         click.echo("📤 Pushing base image...")
         for tag in image_tags:
-            result = subprocess.run(["docker", "push", tag])
+            result = docker_cmd(["docker", "push", tag])
             if result.returncode != 0:
                 raise click.ClickException(f"Failed to push {tag}")
 
         # Logout after push
-        subprocess.run(["docker", "logout", "ghcr.io"], check=False)
+        docker_cmd(["docker", "logout", "ghcr.io"])

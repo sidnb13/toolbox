@@ -1,12 +1,17 @@
 import os
 import re
-import subprocess
 from pathlib import Path
 
 import click
 
 from ..utils.db import DB
-from ..utils.docker import cleanup_containers, verify_env_vars
+from ..utils.docker import (
+    RemoteConfig,
+    cleanup_containers,
+    start_container,
+    verify_env_vars,
+)
+from ..utils.helpers import remote_cmd
 from ..utils.remote import (
     cleanup_tunnels,
     setup_conda_env,
@@ -34,7 +39,17 @@ def remote():
 @click.option("--env-name", help="Conda environment name (for conda mode)")
 @click.option("--force-rebuild", is_flag=True, help="Force rebuild of container")
 @click.option("--silent", is_flag=True, help="don't show detailed output")
-def connect(host_or_alias, alias, username, mode, env_name, force_rebuild, silent):
+@click.option("--clean-containers", is_flag=True, help="Cleanup containers")
+def connect(
+    host_or_alias,
+    alias,
+    username,
+    mode,
+    env_name,
+    force_rebuild,
+    silent,
+    clean_containers,
+):
     """Connect to remote development environment"""
     # Validate host IP address format
     ip_pattern = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
@@ -59,56 +74,71 @@ def connect(host_or_alias, alias, username, mode, env_name, force_rebuild, silen
         host = host_or_alias
         remote = db.add_remote(username, host, alias, mode == "conda", env_name)
 
-    project_name = Path.cwd().name
+    # create custom ssh config if not exists
+    ssh_config_path = Path("~/.ssh/mltoolbox_config").expanduser()
+    if not ssh_config_path.exists():
+        ssh_config_path.touch()
 
-    log("📦 Syncing project files...")
-    sync_project(username, host, project_name)
+        # add include directive to main ssh config
+        main_ssh_config_path = Path("~/.ssh/config").expanduser()
+        include_line = f"Include {ssh_config_path}\n"
+
+        # Create main SSH config if it doesn't exist
+        if not main_ssh_config_path.exists():
+            main_ssh_config_path.touch()
+
+        # Read existing content
+        with main_ssh_config_path.open("r") as f:
+            content = f.read()
+
+        # Add include at the top if it's not already there
+        if include_line not in content:
+            with main_ssh_config_path.open("w") as f:
+                f.write(include_line + content)
+
+    # add host and alias entry to custom ssh config
+    with ssh_config_path.open("a") as f:
+        f.write(f"Host {remote.alias}\n")
+        f.write(f"    HostName {remote.host}\n")
+        f.write(f"    User {remote.username}\n")
+        f.write("    ForwardAgent yes\n")
+
+    click.echo(f"Access your instance with `ssh {remote.alias}`")
+
+    remote_config = RemoteConfig(
+        host=host, username=username, working_dir=f"~/projects/{project_name}"
+    )
+    project_name = Path.cwd().name
 
     if mode == "container":
         # Clean up any existing containers
-        cleanup_containers(project_name)
-
+        if clean_containers:
+            cleanup_containers(project_name, remote=remote_config)
         # Clean up any existing tunnels
         cleanup_tunnels()
-
         # Setup SSH tunnel for remote access
         log("🔧 Setting up SSH tunnel...")
-        setup_ssh_tunnel(username, host)
-
+        setup_ssh_tunnel(remote_config)
         # Sync project files
         log("📦 Syncing project files...")
-        sync_project(username, host, project_name)
-
+        sync_project(remote_config, project_name)
         # Start the container on the remote host
         log("🚀 Starting remote container...")
-        ssh_cmd = (
-            f"cd ~/projects/{project_name} && docker compose --profile linux up -d"
-        )
-        subprocess.run(["ssh", f"{username}@{host}", ssh_cmd], check=True)
-
-        log("✅ Remote environment ready!")
-
-        # Connect to the container
-        container_name = f"{project_name}-linux".lower()
-        exec_cmd = (
-            f"docker exec -it -w /workspace/{project_name} {container_name} /bin/bash"
-        )
-        os.execvp("ssh", ["ssh", "-t", f"{username}@{host}", exec_cmd])
-
+        start_container(project_name, remote_config=remote_config)
+    elif mode == "ssh":
+        # Connect to remote on appropriate directory
+        ssh_cmd = f"cd ~/projects/{project_name} && bash"
+        log(f"🔗 Connecting to remote: {username}@{host}")
+        remote_cmd(remote_config, [ssh_cmd], interactive=True)
     elif mode == "conda":
         # Clean up any existing tunnels
         cleanup_tunnels()
-
         # Setup conda environment
         log("🔧 Setting up conda environment...")
         setup_conda_env(username, host, env_name)
-
         # Connect to conda environment
         conda_cmd = f"cd ~/projects/{project_name} && conda activate {env_name} && bash"
         os.execvp("ssh", ["ssh", "-t", f"{username}@{host}", conda_cmd])
-
-    else:
-        raise click.ClickException(f"Invalid mode: {mode}")
 
 
 @remote.command()
@@ -133,12 +163,22 @@ def list():
 
 
 @remote.command()
+@click.argument("alias")
+def remove(alias: str):
+    """Remove a remote"""
+    db = DB()
+    db.delete_remote(alias)
+    click.echo(f"Removed remote '{alias}'")
+
+
+@remote.command()
 @click.argument("host")
 @click.option("--username", default="ubuntu", help="Remote username")
 def sync(host, username):
     """Sync project files with remote host"""
     project_name = Path.cwd().name
-    sync_project(username, host, project_name)
+    remote_config = RemoteConfig(host, username)
+    sync_project(remote_config, project_name)
 
 
 @remote.command()
