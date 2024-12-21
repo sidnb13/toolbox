@@ -7,6 +7,7 @@ import click
 from ..utils.db import DB
 from ..utils.docker import (
     RemoteConfig,
+    check_docker_group,
     cleanup_containers,
     start_container,
     verify_env_vars,
@@ -27,7 +28,7 @@ def remote():
 
 
 @remote.command()
-@click.argument("host_or_alias")
+@click.argument("host")
 @click.option("--alias", help="Remote alias")
 @click.option("--username", default="ubuntu", help="Remote username")
 @click.option(
@@ -41,7 +42,7 @@ def remote():
 @click.option("--silent", is_flag=True, help="don't show detailed output")
 @click.option("--clean-containers", is_flag=True, help="Cleanup containers")
 def connect(
-    host_or_alias,
+    host,
     alias,
     username,
     mode,
@@ -53,7 +54,7 @@ def connect(
     """Connect to remote development environment"""
     # Validate host IP address format
     ip_pattern = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
-    if not re.match(ip_pattern, host_or_alias):
+    if not re.match(ip_pattern, host):
         raise click.BadParameter("Host must be a valid IP address")
 
     def log(msg):
@@ -65,13 +66,13 @@ def connect(
     db = DB()
     project_name = Path.cwd().name
 
-    remote = db.get_remote(host_or_alias)
+    remote = db.get_remote(alias=alias, host=host, username=username)
     if remote:
         username = remote.username
         host = remote.host
-        db.update_last_used(host_or_alias)
+        db.update_last_used(host)
     else:
-        host = host_or_alias
+        host = host
         remote = db.add_remote(username, host, alias, mode == "conda", env_name)
 
     # create custom ssh config if not exists
@@ -111,6 +112,7 @@ def connect(
     project_name = Path.cwd().name
 
     if mode == "container":
+        check_docker_group(remote_config)
         # Clean up any existing containers
         if clean_containers:
             cleanup_containers(project_name, remote=remote_config)

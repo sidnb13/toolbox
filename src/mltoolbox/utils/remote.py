@@ -176,6 +176,7 @@ def sync_project(remote_config: RemoteConfig, project_name: str) -> None:
     remote_cmd(
         remote_config,
         ["mkdir", "-p", f"~/.config/{project_name}", f"~/projects/{project_name}"],
+        use_working_dir=False,
     )
 
     # Sync project files

@@ -56,21 +56,25 @@ class DB:
                     Remote.host,
                     Remote.username,
                     Remote.project_dir,
-                    func.min(Remote.created_at).label('min_created')
+                    func.min(Remote.created_at).label("min_created"),
                 )
                 .group_by(Remote.host, Remote.username, Remote.project_dir)
-                .having(func.count('*') > 1)
+                .having(func.count("*") > 1)
                 .subquery()
             )
 
             # Delete all duplicates except the oldest one
-            duplicates = session.query(Remote).join(
-                subquery,
-                (Remote.host == subquery.c.host) &
-                (Remote.username == subquery.c.username) &
-                (Remote.project_dir == subquery.c.project_dir) &
-                (Remote.created_at != subquery.c.min_created)
-            ).all()
+            duplicates = (
+                session.query(Remote)
+                .join(
+                    subquery,
+                    (Remote.host == subquery.c.host)
+                    & (Remote.username == subquery.c.username)
+                    & (Remote.project_dir == subquery.c.project_dir)
+                    & (Remote.created_at != subquery.c.min_created),
+                )
+                .all()
+            )
             for duplicate in duplicates:
                 session.delete(duplicate)
             session.commit()
@@ -142,10 +146,22 @@ class DB:
             session.refresh(remote)
             return remote
 
-    def get_remote(self, alias: str) -> Remote:
+    def get_remote(
+        self,
+        alias: Optional[str] = None,
+        host: Optional[str] = None,
+        username: Optional[str] = None,
+    ) -> Optional[Remote]:
         with Session(self.engine) as session:
-            remote = session.query(Remote).filter_by(alias=alias).first()
-            return remote
+            filters = {}
+            if alias:
+                filters["alias"] = alias
+            if host:
+                filters["host"] = host
+            if username:
+                filters["username"] = username
+
+            return session.query(Remote).filter_by(**filters).first()
 
     def get_remotes(self) -> List[Remote]:
         with Session(self.engine) as session:

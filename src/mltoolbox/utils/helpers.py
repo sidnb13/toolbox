@@ -1,4 +1,3 @@
-import os
 import subprocess
 from dataclasses import dataclass
 from typing import Optional
@@ -15,40 +14,56 @@ class RemoteConfig:
 
 
 def remote_cmd(
-    config: RemoteConfig, command: list[str], interactive: bool = False
+    config: RemoteConfig,
+    command: list[str],
+    interactive: bool = False,
+    use_working_dir=True,
 ) -> subprocess.CompletedProcess:
-    ssh_cmd = ["ssh", "-o", "StrictHostKeyChecking=no"]
-    if interactive:
-        ssh_cmd.append("-t")
-    # Add SSH key if specified
+    ssh_command = ["ssh"]
     if config.ssh_key:
-        ssh_cmd.extend(["-i", config.ssh_key])
-    # Build the remote command with working directory if specified
-    remote_command = []
-    if config.working_dir:
-        remote_command.extend([f"cd {config.working_dir} &&"])
-    remote_command.extend(command)
-    ssh_cmd.extend([f"{config.username}@{config.host}", " ".join(remote_command)])
+        ssh_command.extend(["-i", config.ssh_key])
+
+    # Force TTY allocation to get proper interactive output
+    ssh_command.extend(["-tt"])
+
+    working_dir = (
+        f"cd {config.working_dir} &&" if config.working_dir and use_working_dir else ""
+    )
+    full_command = ssh_command + [
+        f"{config.username}@{config.host}",
+        f"{working_dir} {' '.join(command)}",
+    ]
 
     try:
-        # Get remote working directory before running main command
-        pwd_cmd = ["ssh"]
-        if config.ssh_key:
-            pwd_cmd.extend(["-i", config.ssh_key])
-        pwd_cmd.extend([f"{config.username}@{config.host}", "pwd"])
+        # get the cwd on remote
+        remote_cwd = subprocess.run(
+            ssh_command + [f"{config.username}@{config.host}", "pwd"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
 
-        try:
-            remote_cwd = subprocess.run(
-                pwd_cmd, check=True, capture_output=True, text=True
-            ).stdout.strip()
-        except subprocess.CalledProcessError:
-            remote_cwd = "unknown"
+        process = subprocess.Popen(
+            full_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.PIPE,
+            universal_newlines=True,
+        )
 
-        # Run the actual command
-        if not interactive:
-            return subprocess.run(ssh_cmd, check=True, capture_output=True, text=True)
-        else:
-            return os.execvp("ssh", ssh_cmd)
+        # Stream output in real-time
+        while True:
+            output = process.stdout.readline()
+            if output == "" and process.poll() is not None:
+                break
+            if output:
+                print(output.rstrip())
+
+        return_code = process.poll()
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, full_command)
+
+        return process
     except subprocess.CalledProcessError as e:
         import traceback
         from pathlib import Path
@@ -72,7 +87,7 @@ def remote_cmd(
             f"  SSH Key: {config.ssh_key or 'default'}",
             "",
             "Command:",
-            f"  Local: {' '.join(ssh_cmd)}",
+            f"  Local: {' '.join(full_command)}",
             f"  Remote: {' '.join(command)}",
             "",
             "Error Details:",

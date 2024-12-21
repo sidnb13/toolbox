@@ -1,6 +1,5 @@
 import grp
 import os
-import platform
 import pwd
 import subprocess
 import sys
@@ -41,7 +40,6 @@ def cleanup_containers(
 ) -> None:
     container_names = [
         f"{project_name}-linux".lower(),
-        f"{project_name}-mac".lower(),
         "ray-head",
     ]
 
@@ -138,20 +136,17 @@ def start_container(
         return (
             remote_cmd(remote_config, cmd, interactive=interactive)
             if remote_config
-            else subprocess.run(cmd)
+            else subprocess.run(
+                cmd,
+                stdout=None,  # Show output in real-time
+                stderr=None,  # Show output in real-time
+                text=True,
+            )
             if not interactive
-            else os.execvp(cmd)
+            else os.execvp(cmd[0], cmd)
         )
 
-    is_arm_mac = (
-        platform.system() == "Darwin" and platform.machine() == "arm64"
-        if not remote_config
-        else False
-    )
-    platform_profile = "mac" if is_arm_mac else "linux"
-    service_name = f"{project_name}-{platform_profile}".lower()
-
-    container_name = f"{project_name}-{platform_profile}".lower()
+    service_name = project_name.lower()
 
     try:
         inspect_result = cmd_wrap(
@@ -161,7 +156,7 @@ def start_container(
                 "inspect",
                 "-f",
                 "'{{.State.Running}}'",
-                container_name,
+                service_name,
             ]
         )
         if not isinstance(inspect_result, subprocess.CompletedProcess):
@@ -173,9 +168,7 @@ def start_container(
         inspect_result.returncode == 0
         and "true" in inspect_result.stdout.strip().lower()
     ):
-        if not is_arm_mac:
-            cmd_wrap(["docker", "exec", container_name, "nvidia-smi", "--list-gpus"])
-
+        cmd_wrap(["docker", "exec", service_name, "nvidia-smi", "--list-gpus"])
         cmd_wrap(
             [
                 "docker",
@@ -183,31 +176,24 @@ def start_container(
                 "-it",
                 "-w",
                 f"/workspace/{project_name}",
-                container_name,
+                service_name,
                 "/bin/bash",
             ],
             interactive=True,
         )
     else:
-        network_ls_result = cmd_wrap(["docker", "network", "ls", "--format={{.Name}}"])
-        if (
-            network_ls_result.returncode == 0
-            and "ray_network" not in network_ls_result.stdout
-        ):
-            cmd_wrap(["docker", "network", "create", "ray_network"])
         result = cmd_wrap(
             [
                 "docker",
                 "compose",
                 "--profile",
-                platform_profile,
                 "up",
                 "-d",
                 service_name,
             ],
         )
         if result.returncode != 0:
-            cmd_wrap(["docker", "logs", container_name])
+            cmd_wrap(["docker", "logs", service_name])
             raise click.ClickException("Failed to start container")
 
         cmd_wrap(
@@ -217,7 +203,7 @@ def start_container(
                 "-it",
                 "-w",
                 f"/workspace/{project_name}",
-                container_name,
+                service_name,
                 "/bin/bash",
             ],
             interactive=True,
@@ -246,15 +232,6 @@ def build_base_image(
             "GIT_NAME and GITHUB_TOKEN environment variables must be set"
         )
 
-    # Check platform and set version
-    is_arm_mac = (
-        platform.system() == "Darwin" and platform.machine() == "arm64"
-        if not remote
-        else False
-    )
-    dockerfile = "Dockerfile.mac" if is_arm_mac else "Dockerfile"
-    platform_tag = "mac" if is_arm_mac else "linux"
-
     # Get package version from pyproject.toml
     import tomli
 
@@ -264,19 +241,25 @@ def build_base_image(
     # Define image names with versioning
     base_name = f"ghcr.io/{git_name}/ml-base"
     image_tags = [
-        f"{base_name}:{platform_tag}-{version}",  # Versioned platform tag
-        f"{base_name}:{platform_tag}-latest",  # Latest platform tag
+        f"{base_name}:{version}",  # Versioned platform tag
+        f"{base_name}:latest",  # Latest platform tag
     ]
 
     def docker_cmd(cmd, input_data=None):
         if remote:
             return remote_cmd(remote, cmd)
         else:
-            return subprocess.run(cmd, input=input_data, capture_output=True, text=True)
+            return subprocess.run(
+                cmd,
+                input=input_data,
+                stdout=None,  # Show output in real-time
+                stderr=None,  # Show output in real-time
+                text=True,
+            )
 
     # Try to pull latest image first
     click.echo("🔄 Checking for existing image...")
-    pull_result = docker_cmd(["docker", "pull", f"{base_name}:{platform_tag}-latest"])
+    pull_result = docker_cmd(["docker", "pull", f"{base_name}:latest"])
     if pull_result.returncode == 0:
         click.echo("✅ Found existing image, will use as cache")
     else:
@@ -295,14 +278,14 @@ def build_base_image(
             )
 
     # Build the image
-    click.echo(f"🏗️  Building base image v{version} for {platform_tag}")
+    click.echo(f"🏗️  Building base image v{version}")
 
     build_args = [
         "docker",
         "build",
         "--pull",  # Always check for updated base images
         "--cache-from",
-        f"{base_name}:{platform_tag}-latest",
+        f"{base_name}:latest",
     ]
 
     # Add tags
@@ -313,15 +296,14 @@ def build_base_image(
     build_args.extend(
         [
             "-f",
-            str(base_dir / dockerfile),
+            str(base_dir / "Dockerfile"),
             "--build-arg",
             f"PYTHON_VERSION={python_version}",
             str(base_dir),
         ]
     )
 
-    if not is_arm_mac:
-        build_args.extend(["--build-arg", f"CUDA_VERSION={cuda_version}"])
+    build_args.extend(["--build-arg", f"CUDA_VERSION={cuda_version}"])
 
     result = docker_cmd(build_args)
     if result.returncode != 0:
