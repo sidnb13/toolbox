@@ -157,7 +157,7 @@ def start_container(
                 "-f",
                 "'{{.State.Running}}'",
                 service_name,
-            ]
+            ],
         )
         if not isinstance(inspect_result, subprocess.CompletedProcess):
             inspect_result.returncode = inspect_result.wait()
@@ -186,12 +186,13 @@ def start_container(
             [
                 "docker",
                 "compose",
-                "--profile",
                 "up",
                 "-d",
                 service_name,
             ],
+            interactive=True
         )
+
         if result.returncode != 0:
             cmd_wrap(["docker", "logs", service_name])
             raise click.ClickException("Failed to start container")

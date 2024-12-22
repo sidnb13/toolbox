@@ -1,4 +1,5 @@
 import subprocess
+import sys
 from dataclasses import dataclass
 from typing import Optional
 
@@ -43,27 +44,22 @@ def remote_cmd(
             text=True,
         ).stdout.strip()
 
-        process = subprocess.Popen(
-            full_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.PIPE,
-            universal_newlines=True,
-        )
-
-        # Stream output in real-time
-        while True:
-            output = process.stdout.readline()
-            if output == "" and process.poll() is not None:
-                break
-            if output:
-                print(output.rstrip())
-
-        return_code = process.poll()
-        if return_code != 0:
-            raise subprocess.CalledProcessError(return_code, full_command)
-
-        return process
+        if interactive:
+            # For interactive sessions, use Popen without pipe redirection
+            return subprocess.run(
+                full_command,
+                stdin=sys.stdin,
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+                text=True,
+            )
+        else:
+            return subprocess.run(
+                full_command,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
     except subprocess.CalledProcessError as e:
         import traceback
         from pathlib import Path

@@ -167,20 +167,41 @@ class DB:
         with Session(self.engine) as session:
             return session.query(Remote).all()
 
-    def delete_remote(self, alias: str) -> None:
+    def delete_remote(
+        self,
+        alias: Optional[str] = None,
+        host: Optional[str] = None,
+        username: Optional[str] = None,
+    ) -> None:
         with Session(self.engine) as session:
-            remote = session.query(Remote).filter_by(alias=alias).first()
-            if remote is None:
-                raise ValueError(f"Remote {alias} not found")
+            filters = {}
+            if alias:
+                filters["alias"] = alias
+            if host:
+                filters["host"] = host
+            if username:
+                filters["username"] = username
 
+            remote = session.query(Remote).filter_by(**filters).first()
             session.delete(remote)
             session.commit()
 
-    def update_last_used(self, alias: str) -> None:
+    def update_last_used(
+        self,
+        alias: Optional[str] = None,
+        host: Optional[str] = None,
+        username: Optional[str] = None,
+    ) -> None:
         with Session(self.engine) as session:
-            remote = session.query(Remote).filter_by(alias=alias).first()
-            if remote is None:
-                raise ValueError(f"Remote {alias} not found")
+            filters = {}
+            if alias:
+                filters["alias"] = alias
+            if host:
+                filters["host"] = host
+            if username:
+                filters["username"] = username
+
+            remote = session.query(Remote).filter_by(**filters).first()
 
             remote.last_used = datetime.now()
             session.commit()

@@ -1,7 +1,7 @@
 import os
 import re
 from pathlib import Path
-
+from typing import Optional
 import click
 
 from ..utils.db import DB
@@ -70,7 +70,7 @@ def connect(
     if remote:
         username = remote.username
         host = remote.host
-        db.update_last_used(host)
+        db.update_last_used(host=host, username=username)
     else:
         host = host
         remote = db.add_remote(username, host, alias, mode == "conda", env_name)
@@ -165,12 +165,13 @@ def list():
 
 
 @remote.command()
-@click.argument("alias")
-def remove(alias: str):
+@click.argument("host")
+@click.option("--username", default="ubuntu", help="Remote username")
+def remove(host: str, username: Optional[str] = None):
     """Remove a remote"""
     db = DB()
-    db.delete_remote(alias)
-    click.echo(f"Removed remote '{alias}'")
+    db.delete_remote(host=host, username=username)
+    click.echo(f"Removed remote {host}")
 
 
 @remote.command()
@@ -181,6 +182,7 @@ def sync(host, username):
     project_name = Path.cwd().name
     remote_config = RemoteConfig(host, username)
     sync_project(remote_config, project_name)
+    click.echo(f"Synced project files with remote host {host}")
 
 
 @remote.command()
