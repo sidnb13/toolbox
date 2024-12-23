@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
+FROM nvcr.io/nvidia/pytorch:24.12-py3
 
 ARG PYTHON_VERSION=3.12
 ARG GIT_EMAIL
