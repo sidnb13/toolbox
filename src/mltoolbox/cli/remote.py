@@ -165,12 +165,12 @@ def list():
 
 
 @remote.command()
-@click.argument("host")
+@click.argument("host_or_alias")
 @click.option("--username", default="ubuntu", help="Remote username")
-def remove(host: str, username: Optional[str] = None):
+def remove(host_or_alias: str, username: Optional[str] = None):
     """Remove a remote"""
-    db.delete_remote(host=host, username=username)
-    click.echo(f"Removed remote {host}")
+    db.delete_remote(host_or_alias=host_or_alias)
+    click.echo(f"Removed remote {host_or_alias}")
 
 
 @remote.command()

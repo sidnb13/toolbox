@@ -6,7 +6,26 @@ FROM ghcr.io/${GIT_NAME}/ml-base:latest
 
 WORKDIR /workspace/${PROJECT_NAME}
 
-# Project-specific requirements only
+# Install additional development tools and configurations
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    nano \
+    nvtop \
+    vim \
+    zsh && \
+    # Install zsh theme
+    sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh)" -- \
+    -t robbyrussell \
+    -p git && \
+    # Cleanup
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Setup Git configuration
+RUN git config --global user.email "${GIT_EMAIL}" && \
+    git config --global user.name "${GIT_NAME}"
+
+# Install requirements
 COPY requirements.txt /tmp/
 RUN /root/.local/bin/uv pip install --system --no-cache-dir -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt

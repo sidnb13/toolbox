@@ -183,20 +183,10 @@ class DB:
 
     def delete_remote(
         self,
-        alias: Optional[str] = None,
-        host: Optional[str] = None,
-        username: Optional[str] = None,
+        host_or_alias: Optional[str] = None,
     ) -> None:
         with Session(self.engine) as session:
-            filters = {}
-            if alias:
-                filters["alias"] = alias
-            if host:
-                filters["host"] = host
-            if username:
-                filters["username"] = username
-
-            remote = session.query(Remote).filter_by(**filters).first()
+            remote = self.get_remote_fuzzy(host_or_alias)
             session.delete(remote)
             session.commit()
 
