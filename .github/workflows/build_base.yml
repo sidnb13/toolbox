@@ -20,16 +20,32 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-xlarge
     steps:
       - uses: actions/checkout@v4
 
-      - name: Free disk space
+      - name: Free up disk space before build
         run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
+          # Remove large unnecessary packages
+          sudo apt-get remove -y '^ghc-.*' '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-cloud-sdk mongodb-org hhvm google-chrome-stable firefox powershell mono-devel
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+
+          # Remove large directories
+          sudo rm -rf /usr/share/dotnet/
+          sudo rm -rf /usr/local/lib/android/
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/share/miniconda
+          sudo rm -rf /opt/microsoft
+
+          # Remove Docker images
+          docker system prune -af
+
+          # Show disk space
           df -h
 
       - name: Set up Python
@@ -103,9 +119,8 @@ jobs:
             GIT_NAME=${{ github.repository_owner }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64 # Temporarily remove arm64 to save space
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           outputs: type=registry
-          compress: true
