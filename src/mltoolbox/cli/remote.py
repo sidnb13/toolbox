@@ -20,6 +20,8 @@ from ..utils.remote import (
     sync_project,
 )
 
+db = DB()
+
 
 @click.group()
 def remote():
@@ -63,7 +65,6 @@ def connect(
 
     verify_env_vars()
 
-    db = DB()
     project_name = Path.cwd().name
 
     remote = db.get_remote(alias=alias, host=host, username=username)
@@ -146,7 +147,6 @@ def connect(
 @remote.command()
 def list():
     """List remotes"""
-    db = DB()
     remotes = db.get_remotes()
 
     if not remotes:
@@ -169,20 +169,20 @@ def list():
 @click.option("--username", default="ubuntu", help="Remote username")
 def remove(host: str, username: Optional[str] = None):
     """Remove a remote"""
-    db = DB()
     db.delete_remote(host=host, username=username)
     click.echo(f"Removed remote {host}")
 
 
 @remote.command()
-@click.argument("host")
-@click.option("--username", default="ubuntu", help="Remote username")
-def sync(host, username):
+@click.argument("host_or_alias")
+def sync(host_or_alias):
     """Sync project files with remote host"""
     project_name = Path.cwd().name
-    remote_config = RemoteConfig(host, username)
+    # Get remote config
+    remote = db.get_remote_fuzzy(host_or_alias=host_or_alias)
+    remote_config = RemoteConfig(host=remote.host, username=remote.username)
     sync_project(remote_config, project_name)
-    click.echo(f"Synced project files with remote host {host}")
+    click.echo(f"Synced project files with remote host {host_or_alias}")
 
 
 @remote.command()

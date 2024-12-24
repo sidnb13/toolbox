@@ -14,7 +14,7 @@ ENV TZ=Etc/UTC \
 
 WORKDIR /workspace
 
-# Install system dependencies
+# Combine all apt operations and cleanup in a single layer
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
@@ -28,40 +28,37 @@ RUN apt-get update && \
     sudo \
     vim \
     wget \
-    zsh \
-    && sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh)" -- \
-    -t robbyrussell \
-    -p git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python
-RUN add-apt-repository ppa:deadsnakes/ppa && \
+    zsh && \
+    add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     python${PYTHON_VERSION} \
     python${PYTHON_VERSION}-dev \
     python${PYTHON_VERSION}-venv \
-    && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install pip and UV
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python && \
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install NVIDIA development tools
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
     nvidia-cuda-toolkit \
-    nvidia-cuda-toolkit-gcc \
-    && rm -rf /var/lib/apt/lists/*
+    nvidia-cuda-toolkit-gcc && \
+    ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python && \
+    # Install zsh theme
+    sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh)" -- \
+    -t robbyrussell \
+    -p git && \
+    # Cleanup
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    rm -rf /tmp/* && \
+    rm -rf /var/tmp/*
+
+# Install pip and UV in a single layer
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python && \
+    curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    # Setup Git configuration
+    git config --global user.email "${GIT_EMAIL}" && \
+    git config --global user.name "${GIT_NAME}"
 
 # Copy and install requirements
 COPY requirements.txt /tmp/
-RUN /root/.local/bin/uv pip install --system --no-cache-dir -r /tmp/requirements.txt
-
-# Setup Git configuration
-RUN git config --global user.email "${GIT_EMAIL}" && \
-    git config --global user.name "${GIT_NAME}"
+RUN /root/.local/bin/uv pip install --system --no-cache-dir -r /tmp/requirements.txt && \
+    rm -f /tmp/requirements.txt
 
 # Copy entrypoint script
 COPY scripts/entrypoint.sh /usr/local/bin/

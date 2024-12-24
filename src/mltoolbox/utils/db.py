@@ -3,7 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, String, create_engine, func
+from sqlalchemy import Boolean, DateTime, String, create_engine, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
@@ -162,6 +162,20 @@ class DB:
                 filters["username"] = username
 
             return session.query(Remote).filter_by(**filters).first()
+
+    def get_remote_fuzzy(self, query: str) -> Optional[Remote]:
+        with Session(self.engine) as session:
+            # Search in both alias and host fields
+            return (
+                session.query(Remote)
+                .filter(
+                    or_(
+                        Remote.alias.ilike(f"%{query}%"),
+                        Remote.host.ilike(f"%{query}%"),
+                    )
+                )
+                .first()
+            )
 
     def get_remotes(self) -> List[Remote]:
         with Session(self.engine) as session:
