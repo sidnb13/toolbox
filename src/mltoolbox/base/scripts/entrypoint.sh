@@ -47,6 +47,5 @@ echo "🚀 Container is ready!"
 echo "-----------------------------------"
 
 # Execute the command passed to docker run
-exec zsh
 echo "🔄 Executing command: $@"
 exec "$@"

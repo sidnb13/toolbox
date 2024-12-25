@@ -19,7 +19,8 @@ RUN apt-get update && \
     git \
     openssh-client \
     sudo \
-    wget && \
+    wget \
+    software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
