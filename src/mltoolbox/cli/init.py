@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 
 import click
+from dotenv import load_dotenv
 
 from ..utils.docker import build_base_image
 from ..utils.templates import generate_project_files
@@ -34,6 +35,7 @@ def init(
     force: bool,
     inside_project: bool,
 ):
+    load_dotenv()
     """Initialize a new ML project"""
     project_dir = Path(project_name) if not inside_project else Path.cwd()
     project_name = project_dir.name

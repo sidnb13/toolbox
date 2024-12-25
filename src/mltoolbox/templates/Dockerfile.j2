@@ -28,12 +28,12 @@ RUN git config --global user.email "${GIT_EMAIL}" && \
 
 # Install requirements
 COPY requirements.txt /tmp/
-RUN /root/.local/bin/uv pip install --system --no-cache-dir -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt
+RUN uv pip install --system --no-cache-dir -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt || true
 
 # If python package exists, install it
 RUN python setup.py develop || true \
-    && /root/.local/bin/uv pip install --system --no-cache-dir -e . || true
+    && uv pip install --system --no-cache-dir -e . || true
 
 COPY scripts/entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh

@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from typing import Optional
 import click
+from dotenv import load_dotenv
 
 from ..utils.db import DB
 from ..utils.docker import (
@@ -26,6 +27,7 @@ db = DB()
 @click.group()
 def remote():
     """Manage remote development environment"""
+    load_dotenv()
     pass
 
 

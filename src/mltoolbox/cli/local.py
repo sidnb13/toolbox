@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import click
+from dotenv import load_dotenv
 
 from ..utils.docker import cleanup_containers, start_container
 
@@ -8,6 +9,7 @@ from ..utils.docker import cleanup_containers, start_container
 @click.group()
 def local():
     """Manage local development environment"""
+    load_dotenv()
     pass
 
 
