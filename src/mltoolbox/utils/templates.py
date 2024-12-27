@@ -103,13 +103,9 @@ def generate_project_files(
     project_entrypoint.write_bytes(base_entrypoint.read_bytes())
     project_entrypoint.chmod(0o755)  # Make executable
 
-    is_arm_mac = platform.system() == "Darwin" and platform.machine() == "arm64"
-    platform_name = "darwin" if is_arm_mac else "linux"
-
     context = {
         "project_name": project_name,
         "ray": ray,
-        "platform": platform_name,
         "container_name": project_name.lower(),
         **env_vars,
     }
@@ -125,8 +121,6 @@ def generate_project_files(
     # Generate Dockerfiles
     dockerfile = render_template("Dockerfile.j2", **context)
     (project_dir / "Dockerfile").write_text(dockerfile)
-    dockerfile = render_template("Dockerfile.mac.j2", **context)
-    (project_dir / "Dockerfile.mac").write_text(dockerfile)
 
     # Generate .env from template first, then merge with existing
     env_template = render_template(".env.j2", **context)

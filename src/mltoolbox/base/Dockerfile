@@ -24,6 +24,7 @@ RUN apt-get update && \
     nano \
     vim \
     zsh \
+    net-tools \
     software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update && \

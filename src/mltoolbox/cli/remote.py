@@ -14,11 +14,8 @@ from ..utils.docker import (
     start_container,
     verify_env_vars,
 )
-from ..utils.helpers import remote_cmd
 from ..utils.remote import (
-    cleanup_tunnels,
     setup_conda_env,
-    setup_ssh_tunnel,
     sync_project,
 )
 
@@ -118,34 +115,24 @@ def connect(
 
     if mode == "container":
         check_docker_group(remote_config)
-        # Clean up any existing containers
         if clean_containers:
             cleanup_containers(project_name, remote=remote_config)
-        # Clean up any existing tunnels
-        cleanup_tunnels()
-        # Setup SSH tunnel for remote access
-        log("🔧 Setting up SSH tunnel...")
-        setup_ssh_tunnel(remote_config)
-        # Sync project files
         log("📦 Syncing project files...")
         sync_project(remote_config, project_name)
-        # Start the container on the remote host
         log("🚀 Starting remote container...")
         start_container(project_name, remote_config=remote_config)
+        cmd = f"cd ~/projects/{project_name} && docker compose exec -it {project_name.lower()} zsh"
     elif mode == "ssh":
-        # Connect to remote on appropriate directory
-        ssh_cmd = f"cd ~/projects/{project_name} && bash"
-        log(f"🔗 Connecting to remote: {username}@{host}")
-        remote_cmd(remote_config, [ssh_cmd], interactive=True)
+        cmd = f"cd ~/projects/{project_name} && bash"
     elif mode == "conda":
-        # Clean up any existing tunnels
-        cleanup_tunnels()
-        # Setup conda environment
         log("🔧 Setting up conda environment...")
         setup_conda_env(username, host, env_name)
-        # Connect to conda environment
-        conda_cmd = f"cd ~/projects/{project_name} && conda activate {env_name} && bash"
-        os.execvp("ssh", ["ssh", "-t", f"{username}@{host}", conda_cmd])
+        cmd = f"cd ~/projects/{project_name} && conda activate {env_name} && bash"
+
+    # Execute the SSH command with port forwarding for all modes
+    os.execvp(
+        "ssh", ["ssh", "-L", "8265:localhost:8265", "-t", f"{username}@{host}", cmd]
+    )
 
 
 @remote.command()
