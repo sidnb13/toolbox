@@ -9,7 +9,7 @@ from ..utils.docker import cleanup_containers, start_container
 @click.group()
 def local():
     """Manage local development environment"""
-    load_dotenv()
+    load_dotenv(".env")
     pass
 
 

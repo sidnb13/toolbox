@@ -2,6 +2,7 @@ import os
 import re
 from pathlib import Path
 from typing import Optional
+
 import click
 from dotenv import load_dotenv
 
@@ -27,7 +28,7 @@ db = DB()
 @click.group()
 def remote():
     """Manage remote development environment"""
-    load_dotenv()
+    load_dotenv(".env")
     pass
 
 
@@ -55,6 +56,7 @@ def connect(
     silent,
     clean_containers,
 ):
+    load_dotenv(".env")
     """Connect to remote development environment"""
     # Validate host IP address format
     ip_pattern = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
@@ -79,7 +81,7 @@ def connect(
         remote = db.add_remote(username, host, alias, mode == "conda", env_name)
 
     # create custom ssh config if not exists
-    ssh_config_path = Path("~/.ssh/mltoolbox_config").expanduser()
+    ssh_config_path = Path("~/.config/mltoolbox/ssh/config").expanduser()
     if not ssh_config_path.exists():
         ssh_config_path.touch()
 
@@ -181,7 +183,7 @@ def sync(host_or_alias):
     """Sync project files with remote host"""
     project_name = Path.cwd().name
     # Get remote config
-    remote = db.get_remote_fuzzy(host_or_alias=host_or_alias)
+    remote = db.get_remote_fuzzy(host_or_alias)
     remote_config = RemoteConfig(host=remote.host, username=remote.username)
     sync_project(remote_config, project_name)
     click.echo(f"Synced project files with remote host {host_or_alias}")

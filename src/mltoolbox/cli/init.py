@@ -35,7 +35,7 @@ def init(
     force: bool,
     inside_project: bool,
 ):
-    load_dotenv()
+    load_dotenv(".env")
     """Initialize a new ML project"""
     project_dir = Path(project_name) if not inside_project else Path.cwd()
     project_name = project_dir.name
@@ -77,6 +77,8 @@ def init(
         "git_name": git_name,
         "git_email": git_email,
         "github_token": github_token,
+        "skypilot_docker_password": github_token,
+        "skypilot_docker_username": git_name,
         "project_name": project_name,
         "wandb_project": project_name,
         "wandb_entity": git_name,  # default to git username

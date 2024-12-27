@@ -131,6 +131,10 @@ def generate_project_files(
     # Generate .env from template first, then merge with existing
     env_template = render_template(".env.j2", **context)
 
+    # Generate skypilot launch config
+    # skypilot_cfg = render_template("skypilot.yml.j2", **context)
+    # (project_dir / "skypilot.yml").write_text(skypilot_cfg)
+
     # Parse the rendered template into a dict
     template_env = {}
     for line in env_template.splitlines():

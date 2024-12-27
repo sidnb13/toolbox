@@ -1,11 +1,8 @@
 import click
-from dotenv import load_dotenv
 
 from .init import init
 from .local import local
 from .remote import remote
-
-load_dotenv()
 
 
 @click.group()
