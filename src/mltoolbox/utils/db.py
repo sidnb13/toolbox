@@ -1,15 +1,49 @@
 import os
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, String, create_engine, func, or_
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Table,
+    create_engine,
+    func,
+    or_,
+)
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class Project(Base):
+    __tablename__ = "projects"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    container_name: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now())
+    # Optional: Add relationship to Remote if you want to track which remotes a project is deployed to
+    remotes: Mapped[List["Remote"]] = relationship(
+        "Remote", secondary="remote_projects", back_populates="projects"
+    )
+
+
+# Association table for many-to-many relationship
+remote_projects = Table(
+    "remote_projects",
+    Base.metadata,
+    Column("remote_id", Integer, ForeignKey("remotes.id")),
+    Column("project_id", Integer, ForeignKey("projects.id")),
+)
 
 
 class Remote(Base):
@@ -26,6 +60,9 @@ class Remote(Base):
     conda_env: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     last_used: Mapped[datetime] = mapped_column(DateTime, default=datetime.now())
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now())
+    projects: Mapped[List[Project]] = relationship(
+        Project, secondary=remote_projects, back_populates="remotes"
+    )
 
 
 class DB:
@@ -46,6 +83,19 @@ class DB:
         Base.metadata.create_all(self.engine)
 
         self.cleanup_duplicates()
+
+    @contextmanager
+    def get_session(self):
+        """Provide a transactional scope around a series of operations."""
+        session = Session(self.engine)
+        try:
+            yield session
+            session.commit()
+        except:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
     def cleanup_duplicates(self):
         """Remove duplicate remote entries that have the same host, username, and project_dir."""
@@ -209,3 +259,26 @@ class DB:
 
             remote.last_used = datetime.now()
             session.commit()
+
+    def get_container_name(self, project_dir: str) -> Optional[str]:
+        """Get container name for a project directory"""
+        with Session(self.engine) as session:
+            remote = session.query(Remote).filter_by(project_dir=project_dir).first()
+            return remote.container_name if remote else None
+
+    def get_or_create_project(self, name: str, container_name: str) -> Project:
+        with Session(self.engine) as session:
+            project = session.query(Project).filter_by(name=name).first()
+            if not project:
+                project = Project(name=name, container_name=container_name)
+                session.add(project)
+                session.commit()
+            return project
+
+    def get_project(self, name: str) -> Optional[Project]:
+        with Session(self.engine) as session:
+            return session.query(Project).filter_by(name=name).first()
+
+    def list_projects(self) -> List[Project]:
+        with Session(self.engine) as session:
+            return session.query(Project).all()

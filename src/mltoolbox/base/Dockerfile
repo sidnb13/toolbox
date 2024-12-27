@@ -52,8 +52,5 @@ RUN apt-get update && \
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python && \
     curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Copy entrypoint script
-COPY scripts/entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/entrypoint.sh
-
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+# Install ray
+RUN pip install -U ray[default]

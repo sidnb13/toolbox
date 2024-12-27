@@ -1,7 +1,6 @@
 import click
 
 from .init import init
-from .local import local
 from .remote import remote
 
 
@@ -13,4 +12,3 @@ def cli():
 
 cli.add_command(init)
 cli.add_command(remote)
-cli.add_command(local)

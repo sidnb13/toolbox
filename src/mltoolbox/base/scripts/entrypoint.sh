@@ -33,8 +33,6 @@ pip list
 
 # Print working directory information
 echo "📂 Current working directory: $(pwd)"
-echo "📂 Contents of current directory:"
-ls -la
 
 # Move git config setup to beginning before any other operations
 echo "🔧 Setting up git configuration..."

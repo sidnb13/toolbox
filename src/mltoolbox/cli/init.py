@@ -5,17 +5,7 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 
-from ..utils.docker import build_base_image
 from ..utils.templates import generate_project_files
-
-
-@click.command()
-@click.option("--cuda-version", default="12.1.0", help="CUDA version for base image")
-@click.option("--python-version", default="3.12", help="Python version")
-@click.option("--push", is_flag=True, default=True, help="Push image after building")
-def init_base(cuda_version: str, python_version: str, push: bool):
-    """Build the base image"""
-    build_base_image(cuda_version, python_version, push)
 
 
 @click.command()
@@ -60,17 +50,6 @@ def init(
     if not github_token:
         github_token = click.prompt("Enter your GitHub token", hide_input=True)
         os.environ["GITHUB_TOKEN"] = github_token
-
-    # Check if base image exists
-    result = subprocess.run(
-        ["docker", "images", "-q", f"ghcr.io/{git_name}/ml-base:latest"],
-        capture_output=True,
-        text=True,
-    )
-
-    if not result.stdout.strip():
-        if click.confirm("Base image not found. Build it now?", default=True):
-            build_base_image(cuda_version, python_version, push=True)
 
     # Create template env variables
     template_env = {

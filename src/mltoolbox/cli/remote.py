@@ -5,12 +5,12 @@ from typing import Optional
 
 import click
 from dotenv import load_dotenv
+from sqlalchemy.orm import joinedload
 
-from ..utils.db import DB
+from ..utils.db import DB, Remote
 from ..utils.docker import (
     RemoteConfig,
     check_docker_group,
-    cleanup_containers,
     start_container,
     verify_env_vars,
 )
@@ -40,18 +40,14 @@ def remote():
     help="Connection mode",
 )
 @click.option("--env-name", help="Conda environment name (for conda mode)")
-@click.option("--force-rebuild", is_flag=True, help="Force rebuild of container")
 @click.option("--silent", is_flag=True, help="don't show detailed output")
-@click.option("--clean-containers", is_flag=True, help="Cleanup containers")
 def connect(
     host,
     alias,
     username,
     mode,
     env_name,
-    force_rebuild,
     silent,
-    clean_containers,
 ):
     load_dotenv(".env")
     """Connect to remote development environment"""
@@ -77,82 +73,118 @@ def connect(
         host = host
         remote = db.add_remote(username, host, alias, mode == "conda", env_name)
 
-    # create custom ssh config if not exists
-    ssh_config_path = Path("~/.config/mltoolbox/ssh/config").expanduser()
-    if not ssh_config_path.exists():
-        ssh_config_path.touch()
-
-        # add include directive to main ssh config
-        main_ssh_config_path = Path("~/.ssh/config").expanduser()
-        include_line = f"Include {ssh_config_path}\n"
-
-        # Create main SSH config if it doesn't exist
-        if not main_ssh_config_path.exists():
-            main_ssh_config_path.touch()
-
-        # Read existing content
-        with main_ssh_config_path.open("r") as f:
-            content = f.read()
-
-        # Add include at the top if it's not already there
-        if include_line not in content:
-            with main_ssh_config_path.open("w") as f:
-                f.write(include_line + content)
-
-    # add host and alias entry to custom ssh config
-    with ssh_config_path.open("a") as f:
-        f.write(f"Host {remote.alias}\n")
-        f.write(f"    HostName {remote.host}\n")
-        f.write(f"    User {remote.username}\n")
-        f.write("    ForwardAgent yes\n")
-
-    click.echo(f"Access your instance with `ssh {remote.alias}`")
-
     remote_config = RemoteConfig(
         host=host, username=username, working_dir=f"~/projects/{project_name}"
     )
     project_name = Path.cwd().name
 
+    # create custom ssh config if not exists
+    ssh_config_path = Path("~/.config/mltoolbox/ssh/config").expanduser()
+    ssh_config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # add include directive to main ssh config if needed
+    main_ssh_config_path = Path("~/.ssh/config").expanduser()
+    include_line = f"Include {ssh_config_path}\n"
+
+    if not main_ssh_config_path.exists():
+        main_ssh_config_path.touch()
+
+    with main_ssh_config_path.open("r") as f:
+        content = f.read()
+
+    if include_line not in content:
+        with main_ssh_config_path.open("w") as f:
+            f.write(include_line + content)
+
+    # Read existing config and filter out previous entries for this host/alias
+    existing_config = []
+    current_host = None
+    skip_block = False
+
+    if ssh_config_path.exists():
+        with ssh_config_path.open("r") as f:
+            for line in f:
+                if line.startswith("Host "):
+                    current_host = line.split()[1].strip()
+                    # Skip this block if it matches our host or alias
+                    skip_block = current_host in (remote.alias, remote.host)
+                if not skip_block:
+                    existing_config.append(line)
+                elif not line.strip() or line.startswith("Host "):
+                    skip_block = False
+
+    # Write updated config
+    with ssh_config_path.open("w") as f:
+        # Write existing entries (excluding the one we're updating)
+        f.writelines(existing_config)
+
+        # Add a newline if the file doesn't end with one
+        if existing_config and not existing_config[-1].endswith("\n"):
+            f.write("\n")
+
+        # Write the new/updated entry
+        f.write(f"Host {remote.alias}\n")
+        f.write(f"    HostName {remote.host}\n")
+        f.write(f"    User {remote.username}\n")
+        f.write("    ForwardAgent yes\n\n")
+
+    click.echo(f"Access your instance with `ssh {remote.alias}`")
+
     if mode == "container":
         check_docker_group(remote_config)
-        if clean_containers:
-            cleanup_containers(project_name, remote=remote_config)
         log("📦 Syncing project files...")
         sync_project(remote_config, project_name)
         log("🚀 Starting remote container...")
-        start_container(project_name, remote_config=remote_config)
+        start_container(project_name, project_name, remote_config=remote_config)
         cmd = f"cd ~/projects/{project_name} && docker compose exec -it {project_name.lower()} zsh"
     elif mode == "ssh":
-        cmd = f"cd ~/projects/{project_name} && bash"
+        cmd = f"cd ~/projects/{project_name} && zsh"
     elif mode == "conda":
         log("🔧 Setting up conda environment...")
         setup_conda_env(username, host, env_name)
-        cmd = f"cd ~/projects/{project_name} && conda activate {env_name} && bash"
+        cmd = f"cd ~/projects/{project_name} && conda activate {env_name} && zsh"
 
     # Execute the SSH command with port forwarding for all modes
     os.execvp(
-        "ssh", ["ssh", "-L", "8265:localhost:8265", "-t", f"{username}@{host}", cmd]
+        "ssh",
+        [
+            "ssh",
+            "-o",
+            "ControlMaster=no",
+            "-L",
+            "8265:localhost:8265",
+            "-t",
+            f"{username}@{host}",
+            cmd,
+        ],
     )
 
 
 @remote.command()
 def list():
-    """List remotes"""
-    remotes = db.get_remotes()
+    """List remotes and their associated projects"""
+    with db.get_session() as session:
+        remotes = session.query(Remote).options(joinedload(Remote.projects)).all()
 
-    if not remotes:
-        click.echo("No remotes found")
-        return
+        if not remotes:
+            click.echo("No remotes found")
+            return
 
-    click.echo("\nConfigured remotes:")
-    for remote in remotes:
-        click.echo(f"\n{remote.alias}:")
-        click.echo(f"  Host: {remote.host}")
-        click.echo(f"  Project: {remote.project_dir}")
-        click.echo(f"  Last used: {remote.last_used}")
-        click.echo(f"  Type: {'conda' if remote.is_conda else 'container'}")
-        if remote.is_conda and remote.conda_env:
-            click.echo(f"  Conda env: {remote.conda_env}")
+        click.echo("\nConfigured remotes:")
+        for remote in remotes:
+            click.echo(f"\n{remote.alias}:")
+            click.echo(f"  Host: {remote.host}")
+            click.echo(f"  Last used: {remote.last_used}")
+            if remote.conda_env:
+                click.echo(f"  Conda env: {remote.conda_env}")
+
+            # Show all projects associated with this remote
+            if remote.projects:
+                click.echo("  Projects:")
+                for project in remote.projects:
+                    click.echo(f"    - {project.name}")
+                    click.echo(f"      Container: {project.container_name}")
+                    click.echo(f"      Directory: {remote.project_dir}/{project.name}")
 
 
 @remote.command()
@@ -174,12 +206,3 @@ def sync(host_or_alias):
     remote_config = RemoteConfig(host=remote.host, username=remote.username)
     sync_project(remote_config, project_name)
     click.echo(f"Synced project files with remote host {host_or_alias}")
-
-
-@remote.command()
-def cleanup():
-    """Clean up SSH tunnels and ports"""
-    from ..utils.remote import cleanup_tunnels
-
-    cleanup_tunnels()
-    click.echo("🧹 Cleaned up SSH tunnels and ports")

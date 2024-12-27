@@ -4,6 +4,7 @@ ARG PROJECT_NAME
 
 FROM ghcr.io/${GIT_NAME}/ml-base:latest
 
+ENV PATH="/usr/local/bin:/root/.local/bin:/opt/conda/bin:${PATH}"
 WORKDIR /workspace/${PROJECT_NAME}
 
 # Setup Git configuration
