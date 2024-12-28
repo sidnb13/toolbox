@@ -66,17 +66,24 @@ def connect(
 
     project_name = Path.cwd().name
 
-    remote = db.get_remote(alias=alias, host=host, username=username)
-    if remote:
-        username = remote.username
-        host = remote.host
-        db.update_last_used(host=host, username=username)
-    else:
-        host = host
-        remote = db.add_remote(username, host, alias, mode == "conda", env_name)
+    # Determine container name based on mode
+    container_name = project_name if mode == "container" else None
+
+    # Get or create/update remote and project
+    remote = db.upsert_remote(
+        username=username,
+        host=host
+        or host_or_alias,  # Use host if parsed from IP, otherwise use host_or_alias
+        project_name=project_name,
+        container_name=container_name,
+        conda_env=env_name if mode == "conda" else None,
+        alias=alias,
+    )
 
     remote_config = RemoteConfig(
-        host=host, username=username, working_dir=f"~/projects/{project_name}"
+        host=remote.host,
+        username=remote.username,
+        working_dir=f"~/projects/{project_name}",
     )
     project_name = Path.cwd().name
 
