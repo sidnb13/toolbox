@@ -7,7 +7,6 @@ import click
 from dotenv import load_dotenv
 from sqlalchemy.orm import joinedload
 
-from mltoolbox.utils.helpers import remote_cmd
 
 from ..utils.db import DB, Remote
 from ..utils.docker import (
@@ -33,6 +32,7 @@ def remote():
 
 @remote.command()
 @click.argument("host_or_alias")
+@click.option("--alias")
 @click.option("--username", default="ubuntu", help="Remote username")
 @click.option(
     "--mode",
@@ -41,14 +41,13 @@ def remote():
     help="Connection mode",
 )
 @click.option("--env-name", help="Conda environment name (for conda mode)")
-@click.option("--silent", is_flag=True, help="don't show detailed output")
 @click.option("--force-rebuild", is_flag=True, help="force rebuild remote container")
 def connect(
     host_or_alias,
+    alias,
     username,
     mode,
     env_name,
-    silent,
     force_rebuild,
 ):
     """Connect to remote development environment"""
@@ -60,7 +59,7 @@ def connect(
         alias = host_or_alias
     else:
         host = host_or_alias
-        alias = None
+        alias = alias
 
     verify_env_vars()
 

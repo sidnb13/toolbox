@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import List, Optional
 
 from sqlalchemy import (
-    Boolean,
     Column,
     DateTime,
     ForeignKey,
