@@ -2,6 +2,7 @@ import subprocess
 from pathlib import Path
 
 import click
+import pkg_resources
 
 from .helpers import RemoteConfig, remote_cmd
 

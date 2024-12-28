@@ -7,6 +7,8 @@ import click
 from dotenv import load_dotenv
 from sqlalchemy.orm import joinedload
 
+from mltoolbox.utils.helpers import remote_cmd
+
 from ..utils.db import DB, Remote
 from ..utils.docker import (
     RemoteConfig,
@@ -30,8 +32,7 @@ def remote():
 
 
 @remote.command()
-@click.argument("host")
-@click.option("--alias", help="Remote alias")
+@click.argument("host_or_alias")
 @click.option("--username", default="ubuntu", help="Remote username")
 @click.option(
     "--mode",
@@ -41,24 +42,25 @@ def remote():
 )
 @click.option("--env-name", help="Conda environment name (for conda mode)")
 @click.option("--silent", is_flag=True, help="don't show detailed output")
+@click.option("--force-rebuild", is_flag=True, help="force rebuild remote container")
 def connect(
-    host,
-    alias,
+    host_or_alias,
     username,
     mode,
     env_name,
     silent,
+    force_rebuild,
 ):
-    load_dotenv(".env")
     """Connect to remote development environment"""
+
     # Validate host IP address format
     ip_pattern = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
-    if not re.match(ip_pattern, host):
-        raise click.BadParameter("Host must be a valid IP address")
-
-    def log(msg):
-        if not silent:
-            click.echo(msg)
+    if not re.match(ip_pattern, host_or_alias):
+        host = None
+        alias = host_or_alias
+    else:
+        host = host_or_alias
+        alias = None
 
     verify_env_vars()
 
@@ -132,15 +134,17 @@ def connect(
 
     if mode == "container":
         check_docker_group(remote_config)
-        log("📦 Syncing project files...")
+        click.echo("📦 Syncing project files...")
         sync_project(remote_config, project_name)
-        log("🚀 Starting remote container...")
-        start_container(project_name, project_name, remote_config=remote_config)
-        cmd = f"cd ~/projects/{project_name} && docker compose exec -it {project_name.lower()} zsh"
+        click.echo("🚀 Starting remote container...")
+        start_container(
+            project_name, project_name, remote_config=remote_config, build=force_rebuild
+        )
+        cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {project_name.lower()} zsh"
     elif mode == "ssh":
         cmd = f"cd ~/projects/{project_name} && zsh"
     elif mode == "conda":
-        log("🔧 Setting up conda environment...")
+        click.echo("🔧 Setting up conda environment...")
         setup_conda_env(username, host, env_name)
         cmd = f"cd ~/projects/{project_name} && conda activate {env_name} && zsh"
 

@@ -19,7 +19,16 @@ services:
       - ${HOME}/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
     {% if ray %}
     network_mode: host
-    command: zsh -c "ray start --address=localhost:6379 --node-name={{ project_name | lower }} && tail -f /dev/null"
+    command: >
+      zsh -c "
+      ray start --head \
+      --include-dashboard=true \
+      --dashboard-host=0.0.0.0 \
+      --dashboard-port=8265 \
+      --port=6379 \
+      --ray-client-server-port=10001 \
+      --node-ip-address=0.0.0.0 \
+      --block"
     {% endif %}
     deploy:
       resources:
@@ -38,8 +47,6 @@ services:
     labels:
       - autoheal=true
       - autoheal.stop.timeout=1
-    depends_on:
-      - ray-head
 
   autoheal:
     image: willfarrell/autoheal
@@ -48,18 +55,3 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: always
-
-  ray-head:
-    image: ${CONTAINER_NAME}:latest  # Use the same image as project container
-    container_name: ray-head
-    network_mode: host
-    command: >
-      zsh -c "
-      ray start --head \
-      --include-dashboard=true \
-      --dashboard-host=0.0.0.0 \
-      --dashboard-port=8265 \
-      --port=6379 \
-      --ray-client-server-port=10001 \
-      --node-ip-address=0.0.0.0 \
-      --block"

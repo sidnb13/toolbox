@@ -88,7 +88,10 @@ def get_image_digest(
 
 
 def start_container(
-    project_name: str, container_name: str, remote_config: Optional[RemoteConfig] = None
+    project_name: str,
+    container_name: str,
+    remote_config: Optional[RemoteConfig] = None,
+    build=False,
 ) -> None:
     def cmd_wrap(cmd, interactive=False):
         return (
@@ -106,15 +109,22 @@ def start_container(
 
     service_name = project_name.lower()
 
-    cmd_wrap(
-        [
-            "docker",
-            "compose",
-            "up",
-            "--attach",
-            service_name,
-            "--no-recreate",
-            service_name,
-        ],
-        interactive=True,
-    )
+    # # Start Ray head node using ray compose file
+    # ray_cmd = [
+    #     "docker",
+    #     "compose",
+    #     "-f",
+    #     "docker-compose-ray.yml",
+    #     "up",
+    #     "-d",
+    #     "--no-recreate",
+    #     "ray-head",
+    # ]
+    # cmd_wrap(ray_cmd, interactive=True)
+
+    # Start in detached mode
+    base_cmd = ["docker", "compose", "up", "-d"]
+    if build:
+        base_cmd.append("--build")
+    base_cmd.append(service_name)
+    cmd_wrap(base_cmd, interactive=True)

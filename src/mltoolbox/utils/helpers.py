@@ -28,7 +28,9 @@ def remote_cmd(
     ssh_command.extend(["-tt"])
 
     working_dir = (
-        f"cd {config.working_dir} &&" if config.working_dir and use_working_dir else ""
+        f"mkdir -p {config.working_dir} && cd {config.working_dir} &&"
+        if config.working_dir and use_working_dir
+        else ""
     )
     full_command = ssh_command + [
         f"{config.username}@{config.host}",
