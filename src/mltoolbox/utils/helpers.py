@@ -10,15 +10,15 @@ import click
 class RemoteConfig:
     host: str
     username: str
-    ssh_key: Optional[str] = None
-    working_dir: Optional[str] = None
+    ssh_key: Optional[str] = None  # noqa: FA100
+    working_dir: Optional[str] = None  # noqa: FA100
 
 
 def remote_cmd(
     config: RemoteConfig,
     command: list[str],
-    interactive: bool = False,
-    use_working_dir=True,
+    interactive: bool = False,  # noqa: FBT001, FBT002
+    use_working_dir=True,  # noqa: FBT002
 ) -> subprocess.CompletedProcess:
     ssh_command = ["ssh"]
     if config.ssh_key:

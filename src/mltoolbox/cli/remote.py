@@ -1,33 +1,27 @@
 import os
 import re
 from pathlib import Path
-from typing import Optional
 
 import click
 from dotenv import load_dotenv
 from sqlalchemy.orm import joinedload
 
-
-from ..utils.db import DB, Remote
-from ..utils.docker import (
+from mltoolbox.utils.db import DB, Remote
+from mltoolbox.utils.docker import (
     RemoteConfig,
     check_docker_group,
     start_container,
     verify_env_vars,
 )
-from ..utils.remote import (
-    setup_conda_env,
-    sync_project,
-)
+from mltoolbox.utils.remote import setup_conda_env, sync_project
 
 db = DB()
 
 
 @click.group()
 def remote():
-    """Manage remote development environment"""
+    """Manage remote development environment."""
     load_dotenv(".env")
-    pass
 
 
 @remote.command()
@@ -42,6 +36,13 @@ def remote():
 )
 @click.option("--env-name", help="Conda environment name (for conda mode)")
 @click.option("--force-rebuild", is_flag=True, help="force rebuild remote container")
+@click.option(
+    "--forward-ports",
+    "-p",
+    multiple=True,
+    default=["8000:8000", "8265:8265"],
+    help="Port forwarding",
+)
 def connect(
     host_or_alias,
     alias,
@@ -49,9 +50,9 @@ def connect(
     mode,
     env_name,
     force_rebuild,
+    forward_ports,
 ):
-    """Connect to remote development environment"""
-
+    """Connect to remote development environment."""
     # Validate host IP address format
     ip_pattern = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
     if not re.match(ip_pattern, host_or_alias):
@@ -59,7 +60,6 @@ def connect(
         alias = host_or_alias
     else:
         host = host_or_alias
-        alias = alias
 
     verify_env_vars()
 
@@ -144,7 +144,7 @@ def connect(
         sync_project(remote_config, project_name)
         click.echo("🚀 Starting remote container...")
         start_container(
-            project_name, project_name, remote_config=remote_config, build=force_rebuild
+            project_name, project_name, remote_config=remote_config, build=force_rebuild,
         )
         cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {project_name.lower()} zsh"
     elif mode == "ssh":
@@ -155,24 +155,24 @@ def connect(
         cmd = f"cd ~/projects/{project_name} && conda activate {env_name} && zsh"
 
     # Execute the SSH command with port forwarding for all modes
-    os.execvp(
-        "ssh",
-        [
-            "ssh",
-            "-o",
-            "ControlMaster=no",
-            "-L",
-            "8265:localhost:8265",
-            "-t",
-            f"{username}@{host}",
-            cmd,
-        ],
-    )
+    # Build SSH command with port forwarding
+    ssh_args = ["ssh", "-o", "ControlMaster=no"]
+
+    # Add port forwarding arguments
+    for port_mapping in forward_ports:
+        local_port, remote_port = port_mapping.split(":")
+        ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
+
+    # Add remaining SSH arguments
+    ssh_args.extend(["-t", f"{username}@{host}", cmd])
+
+    # Execute SSH command
+    os.execvp("ssh", ssh_args)  # noqa: S606
 
 
 @remote.command()
-def list():
-    """List remotes and their associated projects"""
+def list():  # noqa: A001
+    """List remotes and their associated projects."""
     with db.get_session() as session:
         remotes = session.query(Remote).options(joinedload(Remote.projects)).all()
 
@@ -185,23 +185,20 @@ def list():
             click.echo(f"\n{remote.alias}:")
             click.echo(f"  Host: {remote.host}")
             click.echo(f"  Last used: {remote.last_used}")
-            if remote.conda_env:
-                click.echo(f"  Conda env: {remote.conda_env}")
 
             # Show all projects associated with this remote
             if remote.projects:
                 click.echo("  Projects:")
                 for project in remote.projects:
+                    if project.conda_env:
+                        click.echo(f"  Conda env: {project.conda_env}")
                     click.echo(f"    - {project.name}")
                     click.echo(f"      Container: {project.container_name}")
-                    click.echo(f"      Directory: {remote.project_dir}/{project.name}")
-
 
 @remote.command()
 @click.argument("host_or_alias")
-@click.option("--username", default="ubuntu", help="Remote username")
-def remove(host_or_alias: str, username: Optional[str] = None):
-    """Remove a remote"""
+def remove(host_or_alias: str):
+    """Remove a remote."""
     db.delete_remote(host_or_alias=host_or_alias)
     click.echo(f"Removed remote {host_or_alias}")
 
@@ -209,7 +206,7 @@ def remove(host_or_alias: str, username: Optional[str] = None):
 @remote.command()
 @click.argument("host_or_alias")
 def sync(host_or_alias):
-    """Sync project files with remote host"""
+    """Sync project files with remote host."""
     project_name = Path.cwd().name
     # Get remote config
     remote = db.get_remote_fuzzy(host_or_alias)

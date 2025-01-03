@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import os
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from sqlalchemy import (
     Column,
@@ -29,12 +31,11 @@ class Project(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String)
     container_name: Mapped[str] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now())
-    remotes: Mapped[List["Remote"]] = relationship(
-        "Remote", secondary="remote_projects", back_populates="projects"
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now())  # noqa: DTZ005
+    remotes: Mapped[list[Remote]] = relationship(
+        "Remote", secondary="remote_projects", back_populates="projects",
     )
-    conda_env: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-
+    conda_env: Mapped[str | None] = mapped_column(String, nullable=True)
 
 # Association table for many-to-many relationship
 remote_projects = Table(
@@ -55,29 +56,29 @@ class Remote(Base):
     git_name: Mapped[str] = mapped_column(String)
     last_used: Mapped[datetime] = mapped_column(DateTime, default=datetime.now())
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now())
-    projects: Mapped[List[Project]] = relationship(
-        Project, secondary=remote_projects, back_populates="remotes"
+    projects: Mapped[list[Project]] = relationship(
+        Project, secondary=remote_projects, back_populates="remotes",
     )
 
 
 class DB:
     def __init__(self):
-        config_dir = Path.home() / ".config" / "mltoolbox"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        db_file = config_dir / "mltoolbox.db"
+            config_dir = Path.home() / ".config" / "mltoolbox"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            db_file = config_dir / "mltoolbox.db"
 
-        if db_file.exists():
-            try:
-                self.engine = create_engine(f"sqlite:///{db_file}")
-                with Session(self.engine) as session:
-                    session.query(Remote).first()
-            except Exception as e:
-                db_file.unlink()
+            if db_file.exists():
+                try:
+                    self.engine = create_engine(f"sqlite:///{db_file}")
+                    with Session(self.engine) as session:
+                        session.query(Remote).first()
+                except Exception:
+                    db_file.unlink()
 
-        self.engine = create_engine(f"sqlite:///{db_file}")
-        Base.metadata.create_all(self.engine)
+            self.engine = create_engine(f"sqlite:///{db_file}")
+            Base.metadata.create_all(self.engine)
 
-        self.cleanup_duplicates()
+            self.cleanup_duplicates()
 
     @contextmanager
     def get_session(self):
@@ -93,62 +94,56 @@ class DB:
             session.close()
 
     def upsert_remote(
-        self,
-        username: str,
-        host: str,
-        project_name: str,
-        container_name: Optional[str] = None,
-        conda_env: Optional[str] = None,
-        alias: Optional[str] = None,
-        update_timestamp: bool = True,
-    ) -> Remote:
-        """
-        Creates or updates a remote entry and associates it with a project.
+            self,
+            username: str,
+            host: str,
+            project_name: str,
+            container_name: str | None = None,
+            conda_env: str | None = None,
+            alias: str | None = None,
+            *,
+            update_timestamp: bool = True,
+        ) -> Remote:
+        """Create or update a remote entry and associate it with a project.
+
         Also handles updating last_used timestamp and project associations.
         """
         git_name = os.getenv("GIT_NAME")
-        container_name = (
-            container_name or project_name
-        )  # Default to project name if not specified
+        container_name = container_name or project_name
 
-        # Generate new alias if needed
-        if not alias:
-            with Session(self.engine) as session:
-                while True:
-                    max_alias = (
-                        session.query(func.max(Remote.alias))
-                        .filter(Remote.alias.like("mltoolbox-%"))
-                        .filter(Remote.alias.regexp_match(r"mltoolbox-\d+$"))
-                        .scalar()
-                    )
+        def _generate_alias(session: Session) -> str:
+            while True:
+                max_alias = (
+                    session.query(func.max(Remote.alias))
+                    .filter(Remote.alias.like("mltoolbox-%"))
+                    .filter(Remote.alias.regexp_match(r"mltoolbox-\d+$"))
+                    .scalar()
+                )
 
-                    if not max_alias:
-                        alias = "mltoolbox-1"
-                    else:
-                        current_num = int(max_alias.split("-")[1])
-                        alias = f"mltoolbox-{current_num + 1}"
+                alias_num = 1 if not max_alias else int(max_alias.split("-")[1]) + 1
+                alias = f"mltoolbox-{alias_num}"
 
-                    try:
-                        session.flush()
-                        break
-                    except IntegrityError:
-                        session.rollback()
-                        continue
+                try:
+                    session.flush()
+                    return alias
+                except IntegrityError:
+                    session.rollback()
 
         with Session(self.engine) as session:
-            # Try to find existing remote
+            if not alias:
+                alias = _generate_alias(session)
+
             remote = (
                 session.query(Remote)
                 .filter(
                     or_(
                         Remote.alias == alias,
                         (Remote.host == host and Remote.username == username),
-                    )
+                    ),
                 )
                 .first()
             )
 
-            # Create or get project
             project = session.query(Project).filter_by(name=project_name).first()
             if not project:
                 project = Project(
@@ -158,14 +153,11 @@ class DB:
                 )
                 session.add(project)
             else:
-                # Update project attributes if needed
-                if container_name:
-                    project.container_name = container_name
+                project.container_name = container_name
                 if conda_env:
                     project.conda_env = conda_env
 
-            # Create or update remote
-            if remote is None:
+            if not remote:
                 remote = Remote(
                     alias=alias,
                     username=username,
@@ -178,11 +170,9 @@ class DB:
                 remote.host = host
                 remote.git_name = git_name
 
-            # Update timestamp if requested
             if update_timestamp:
                 remote.last_used = datetime.now()
 
-            # Add project association if it doesn't exist
             if project not in remote.projects:
                 remote.projects.append(project)
 
@@ -223,23 +213,33 @@ class DB:
     def delete_remote(
         self,
         host_or_alias: Optional[str] = None,
-    ) -> None:
+    ) -> bool:
         with Session(self.engine) as session:
-            remote = self.get_remote_fuzzy(host_or_alias)
+            # Query the remote within this session
+            remote = (
+                session.query(Remote)
+                .filter(
+                    or_(
+                        Remote.alias.ilike(f"%{host_or_alias}%"),
+                        Remote.host.ilike(f"%{host_or_alias}%"),
+                    ),
+                )
+                .first()
+            )
+
             if not remote:
-                return
+                return False
 
             # Remove all project associations but don't delete the projects
             remote.projects = []
 
             # Delete remote entry
             session.delete(remote)
-            session.commit()
 
-            # Clean up orphaned projects (optional)
+            # Clean up orphaned projects
             orphaned_projects = (
                 session.query(Project)
-                .filter(~Project.remotes.any())  # Projects with no remote associations
+                .filter(~Project.remotes.any())
                 .all()
             )
             for project in orphaned_projects:
@@ -247,22 +247,7 @@ class DB:
 
             session.commit()
 
-    def get_remote(
-        self,
-        alias: Optional[str] = None,
-        host: Optional[str] = None,
-        username: Optional[str] = None,
-    ) -> Optional[Remote]:
-        with Session(self.engine) as session:
-            filters = {}
-            if alias:
-                filters["alias"] = alias
-            if host:
-                filters["host"] = host
-            if username:
-                filters["username"] = username
-
-            return session.query(Remote).filter_by(**filters).first()
+        return True
 
     def get_remote_fuzzy(self, query: str) -> Optional[Remote]:
         with Session(self.engine) as session:
@@ -273,12 +258,12 @@ class DB:
                     or_(
                         Remote.alias.ilike(f"%{query}%"),
                         Remote.host.ilike(f"%{query}%"),
-                    )
+                    ),
                 )
                 .first()
             )
 
-    def get_remotes(self) -> List[Remote]:
+    def get_remotes(self) -> list[Remote]:
         with Session(self.engine) as session:
             return session.query(Remote).all()
 
@@ -291,10 +276,10 @@ class DB:
                 session.commit()
             return project
 
-    def get_project(self, name: str) -> Optional[Project]:
+    def get_project(self, name: str) -> Project | None:
         with Session(self.engine) as session:
             return session.query(Project).filter_by(name=name).first()
 
-    def list_projects(self) -> List[Project]:
+    def list_projects(self) -> list[Project]:
         with Session(self.engine) as session:
             return session.query(Project).all()

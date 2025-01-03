@@ -48,9 +48,6 @@ RUN apt-get update && \
     rm -rf /tmp/* && \
     rm -rf /var/tmp/*
 
-# Install pip and UV
+# Install ray, pip, uv, and setup LSP
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python && \
     curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install ray
-RUN pip install -U ray[default]

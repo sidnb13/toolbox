@@ -1,6 +1,6 @@
 services:
   ray-head:
-    image: ghcr.io/${GIT_NAME}/ml-base:latest  # Use the same image as project container
+    image: ghcr.io/${GIT_NAME}/ml-base:latest  # Use the same base image as project container
     container_name: ray-head
     network_mode: host
     command: >
