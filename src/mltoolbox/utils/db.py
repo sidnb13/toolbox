@@ -62,23 +62,23 @@ class Remote(Base):
 
 
 class DB:
-    def __init__(self):
-            config_dir = Path.home() / ".config" / "mltoolbox"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            db_file = config_dir / "mltoolbox.db"
+    def __init__(self) -> None:
+        config_dir = Path.home() / ".config" / "mltoolbox"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        db_file = config_dir / "mltoolbox.db"
 
-            if db_file.exists():
-                try:
-                    self.engine = create_engine(f"sqlite:///{db_file}")
-                    with Session(self.engine) as session:
-                        session.query(Remote).first()
-                except Exception:
-                    db_file.unlink()
+        if db_file.exists():
+            try:
+                self.engine = create_engine(f"sqlite:///{db_file}")
+                with Session(self.engine) as session:
+                    session.query(Remote).first()
+            except Exception:  # noqa: BLE001
+                db_file.unlink()
 
-            self.engine = create_engine(f"sqlite:///{db_file}")
-            Base.metadata.create_all(self.engine)
+        self.engine = create_engine(f"sqlite:///{db_file}")
+        Base.metadata.create_all(self.engine)
 
-            self.cleanup_duplicates()
+        self.cleanup_duplicates()
 
     @contextmanager
     def get_session(self):
@@ -115,8 +115,8 @@ class DB:
             while True:
                 max_alias = (
                     session.query(func.max(Remote.alias))
-                    .filter(Remote.alias.like("mltoolbox-%"))
-                    .filter(Remote.alias.regexp_match(r"mltoolbox-\d+$"))
+                    .filter(Remote.alias.like(f"{project_name}-%"))
+                    .filter(Remote.alias.regexp_match(rf"{project_name}-\d+$"))
                     .scalar()
                 )
 
@@ -212,7 +212,7 @@ class DB:
 
     def delete_remote(
         self,
-        host_or_alias: Optional[str] = None,
+        host_or_alias: str | None = None,
     ) -> bool:
         with Session(self.engine) as session:
             # Query the remote within this session

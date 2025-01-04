@@ -146,17 +146,26 @@ def connect(
         start_container(
             project_name, project_name, remote_config=remote_config, build=force_rebuild,
         )
+    elif mode == "conda":
+        click.echo("🔧 Setting up conda environment...")
+        setup_conda_env(username, host, env_name)
+
+    if mode == "container":
         cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {project_name.lower()} zsh"
     elif mode == "ssh":
         cmd = f"cd ~/projects/{project_name} && zsh"
     elif mode == "conda":
-        click.echo("🔧 Setting up conda environment...")
-        setup_conda_env(username, host, env_name)
         cmd = f"cd ~/projects/{project_name} && conda activate {env_name} && zsh"
 
     # Execute the SSH command with port forwarding for all modes
     # Build SSH command with port forwarding
-    ssh_args = ["ssh", "-o", "ControlMaster=no"]
+    ssh_args = [
+        "ssh",
+        "-o", "ControlMaster=no",
+        "-o", "ExitOnForwardFailure=no",  # Don't exit if port forwarding fails
+        "-o", "ServerAliveInterval=60",    # Keep connection alive
+        "-o", "ServerAliveCountMax=3",     # Number of alive checks before giving up
+    ]
 
     # Add port forwarding arguments
     for port_mapping in forward_ports:
