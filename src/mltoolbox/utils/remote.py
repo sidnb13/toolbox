@@ -79,7 +79,7 @@ def sync_project(remote_config: RemoteConfig, project_name: str) -> None:
     # Create remote directories
     remote_cmd(
         remote_config,
-        ["mkdir", "-p", f"~/.config/{project_name}", f"~/projects/{project_name}"],
+        [f"mkdir -p ~/.config/{project_name} ~/projects/{project_name}"],  # Single command string
         use_working_dir=False,
     )
 

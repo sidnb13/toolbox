@@ -1,3 +1,5 @@
+from __future__ import annotations  # noqa: INP001
+
 import grp
 import os
 import pwd
@@ -11,26 +13,37 @@ import click
 from .helpers import RemoteConfig, remote_cmd
 
 
-def check_docker_group(remote: Optional[RemoteConfig] = None) -> None:
+def check_docker_group(remote: RemoteConfig | None = None) -> None:
+    """Check if user is in docker group and add if needed."""
     if remote:
         try:
+            # Check if user is in docker group, add if not
             remote_cmd(
-                remote, ["groups | grep docker || sudo usermod -aG docker $USER"]
+                remote,
+                [
+                    "groups | grep -q docker || "
+                    "(sudo groupadd -f docker && "
+                    "sudo usermod -aG docker $USER && "
+                    "newgrp docker)"
+                ],
+                interactive=True,  # Use interactive mode since newgrp needs it
             )
-        except subprocess.CalledProcessError:
-            raise click.ClickException(
-                "Failed to add user to docker group on remote host"
-            )
+        except Exception as e:
+            raise click.ClickException(f"Failed to setup docker group: {e}")
     else:
+        # Local docker group check
         username = pwd.getpwuid(os.getuid()).pw_name
         try:
-            if "docker" not in [
-                g.gr_name for g in grp.getgrall() if username in g.gr_mem
-            ]:
-                subprocess.run(["sudo", "adduser", username, "docker"], check=True)
-                os.execvp("sg", ["sg", "docker", "-c", f'"{" ".join(sys.argv)}"'])
-        except subprocess.CalledProcessError:
-            raise click.ClickException("Failed to add user to docker group")
+            if "docker" not in [g.gr_name for g in grp.getgrall() if username in g.gr_mem]:
+                subprocess.run(
+                    ["sudo", "usermod", "-aG", "docker", username],
+                    check=True,
+                    capture_output=True,
+                )
+                click.echo("Added user to docker group. Please logout and login again.")
+                sys.exit(0)
+        except subprocess.CalledProcessError as e:
+            raise click.ClickException(f"Failed to add user to docker group: {e}")
 
 
 def verify_env_vars(remote: Optional[RemoteConfig] = None) -> None:
@@ -44,7 +57,7 @@ def verify_env_vars(remote: Optional[RemoteConfig] = None) -> None:
             remote_cmd(remote, [" && ".join(cmd)])
         except subprocess.CalledProcessError:
             raise click.ClickException(
-                f"Required environment variables not set on remote: {', '.join(required_vars)}"
+                f"Required environment variables not set on remote: {', '.join(required_vars)}",
             )
     else:
         if not Path.cwd().joinpath(".env").exists():
@@ -52,25 +65,25 @@ def verify_env_vars(remote: Optional[RemoteConfig] = None) -> None:
         missing_vars = [var for var in required_vars if not os.getenv(var)]
         if missing_vars:
             raise click.ClickException(
-                f"Required environment variables not set: {', '.join(missing_vars)}"
+                f"Required environment variables not set: {', '.join(missing_vars)}",
             )
 
 
 def get_image_digest(
-    image: str, remote: bool = False, remote_config: Optional[RemoteConfig] = None
+    image: str, remote: bool = False, remote_config: Optional[RemoteConfig] = None,
 ) -> str:
     def docker_cmd(cmd):
         return (
             remote_cmd(remote_config, cmd)
             if remote_config
-            else subprocess.run(cmd, capture_output=True, text=True)
+            else subprocess.run(cmd, capture_output=True, text=True, check=False)
         )
 
     if remote:
         git_name = os.getenv("GIT_NAME")
         github_token = os.getenv("GITHUB_TOKEN")
         docker_cmd(
-            ["docker", "login", "ghcr.io", "-u", git_name, "--password-stdin"]
+            ["docker", "login", "ghcr.io", "-u", git_name, "--password-stdin"],
         ).input = github_token.encode()
 
         result = docker_cmd(["docker", "manifest", "inspect", image])
@@ -80,7 +93,7 @@ def get_image_digest(
                     return line.split(":")[2].strip(' ",')
     else:
         result = docker_cmd(
-            ["docker", "image", "inspect", image, "--format={{index .Id}}"]
+            ["docker", "image", "inspect", image, "--format={{index .Id}}"],
         )
         if result.returncode == 0:
             return result.stdout.strip().split(":")[1]
@@ -101,7 +114,7 @@ def start_container(
                 cmd,
                 stdout=None,  # Show output in real-time
                 stderr=None,  # Show output in real-time
-                text=True,
+                text=True, check=False,
             )
             if not interactive
             else os.execvp(cmd[0], cmd)

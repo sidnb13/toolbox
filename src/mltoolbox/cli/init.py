@@ -4,36 +4,31 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 
-from ..utils.templates import generate_project_files
+from mltoolbox.utils.templates import generate_project_files
 
 
 @click.command()
 @click.argument("project_name")
 @click.option("--ray/--no-ray", default=True, help="Include Ray setup")
-@click.option("--cuda-version", default="12.1.0", help="CUDA version for base image")
-@click.option("--python-version", default="3.12", help="Python version")
 @click.option("--force", is_flag=True, help="Force overwrite existing files")
 @click.option(
-    "--inside-project", is_flag=True, help="Initialize inside existing project"
+    "--inside-project", is_flag=True, help="Initialize inside existing project",
 )
 def init(
     project_name: str,
-    ray: bool,
-    cuda_version: str,
-    python_version: str,
-    force: bool,
-    inside_project: bool,
+    use_ray: bool,
+    force: bool = False,
+    inside_project: bool = False,
 ):
+    """Initialize a new ML project."""
     load_dotenv(".env")
-    """Initialize a new ML project"""
     project_dir = Path(project_name) if not inside_project else Path.cwd()
     project_name = project_dir.name
 
-    if not force and any(project_dir.iterdir()):
-        if not click.confirm(
-            f"Directory {project_name} exists. Continue?", default=True
-        ):
-            return
+    if not force and any(project_dir.iterdir()) and not click.confirm(
+        f"Directory {project_name} exists. Continue?", default=True,
+    ):
+        return
     # Build base image if it doesn't exist
     git_name = os.getenv("GIT_NAME")
     if not git_name:
@@ -72,7 +67,7 @@ def init(
     generate_project_files(
         project_dir,
         project_name=project_name,
-        ray=ray,
+        ray=use_ray,
         env_vars=template_env,
     )
 

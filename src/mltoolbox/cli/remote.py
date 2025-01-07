@@ -23,6 +23,9 @@ def remote():
     """Manage remote development environment."""
     load_dotenv(".env")
 
+@remote.command()
+def provision():
+    pass
 
 @remote.command()
 @click.argument("host_or_alias")
@@ -161,10 +164,11 @@ def connect(
     # Build SSH command with port forwarding
     ssh_args = [
         "ssh",
+        "-A",  # Forward SSH agent
         "-o", "ControlMaster=no",
-        "-o", "ExitOnForwardFailure=no",  # Don't exit if port forwarding fails
-        "-o", "ServerAliveInterval=60",    # Keep connection alive
-        "-o", "ServerAliveCountMax=3",     # Number of alive checks before giving up
+        "-o", "ExitOnForwardFailure=no",
+        "-o", "ServerAliveInterval=60",
+        "-o", "ServerAliveCountMax=3",
     ]
 
     # Add port forwarding arguments

@@ -1,100 +1,103 @@
+
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
 from typing import Optional
 
 import click
+import paramiko
 
 
 @dataclass
 class RemoteConfig:
     host: str
     username: str
-    ssh_key: Optional[str] = None  # noqa: FA100
-    working_dir: Optional[str] = None  # noqa: FA100
+    ssh_key: Optional[str] = None
+    working_dir: Optional[str] = None
 
 
 def remote_cmd(
     config: RemoteConfig,
     command: list[str],
-    interactive: bool = False,  # noqa: FBT001, FBT002
-    use_working_dir=True,  # noqa: FBT002
+    interactive=False,
+    use_working_dir=True,
 ) -> subprocess.CompletedProcess:
-    ssh_command = ["ssh"]
-    if config.ssh_key:
-        ssh_command.extend(["-i", config.ssh_key])
-
-    # Force TTY allocation to get proper interactive output
-    ssh_command.extend(["-tt"])
-
-    working_dir = (
-        f"mkdir -p {config.working_dir} && cd {config.working_dir} &&"
-        if config.working_dir and use_working_dir
-        else ""
-    )
-    full_command = ssh_command + [
-        f"{config.username}@{config.host}",
-        f"{working_dir} {' '.join(command)}",
-    ]
+    """Execute command on remote host using paramiko SSH."""
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     try:
-        # get the cwd on remote
-        remote_cwd = subprocess.run(
-            ssh_command + [f"{config.username}@{config.host}", "pwd"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
+        ssh.connect(
+            hostname=config.host,
+            username=config.username,
+            timeout=10,
+            look_for_keys=True,
+            allow_agent=True,  # This is the key part - use the SSH agent
+        )
+        _, stdout, _ = ssh.exec_command("pwd")
+        remote_cwd = stdout.read().decode().strip()
+
+        # Prepare command string
+        cmd_str = " && ".join(command) if isinstance(command, list) else command
+        if config.working_dir and use_working_dir:
+            full_cmd = f"mkdir -p {config.working_dir} && cd {config.working_dir} && {cmd_str}"
+        else:
+            full_cmd = cmd_str
 
         if interactive:
-            # For interactive sessions, use Popen without pipe redirection
+            # For interactive commands, use subprocess since paramiko doesn't handle interactive well
+            ssh.close()
             return subprocess.run(
-                full_command,
+                ["ssh", f"{config.username}@{config.host}", full_cmd],
                 stdin=sys.stdin,
                 stdout=sys.stdout,
                 stderr=sys.stderr,
-                text=True,
+                text=True, check=False,
             )
-        else:
-            return subprocess.run(
-                full_command,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-    except subprocess.CalledProcessError as e:
-        import traceback
-        from pathlib import Path
 
-        # Get additional context
-        local_cwd = Path.cwd()
-        project_name = local_cwd.name
+        # Execute command
+        stdin, stdout, stderr = ssh.exec_command(full_cmd)
+        exit_code = stdout.channel.recv_exit_status()
 
-        # Format the error message with more context
-        error_sections = [
-            "🔴 Remote Command Failed",
-            "━━━━━━━━━━━━━━━━━━━━━━",
-            "Context:",
-            f"  Project: {project_name}",
-            f"  Local Directory: {local_cwd}",
-            f"  Remote Directory: {remote_cwd}",
-            "",
-            "Connection:",
-            f"  Host: {config.host}",
-            f"  User: {config.username}",
-            f"  SSH Key: {config.ssh_key or 'default'}",
-            "",
-            "Command:",
-            f"  Local: {' '.join(full_command)}",
-            f"  Remote: {' '.join(command)}",
-            "",
-            "Error Details:",
-            f"  Exit Code: {e.returncode}",
-            f"  stderr: {e.stderr.strip() if e.stderr else 'None'}",
-            f"  stdout: {e.stdout.strip() if e.stdout else 'None'}",
-            "",
-            "Traceback:",
-            "".join(traceback.format_stack()),
-        ]
+        # Get output
+        output = stdout.read().decode()
+        error = stderr.read().decode()
 
-        raise click.ClickException("\n".join(error_sections)) from e
+        if exit_code != 0:
+            # Format error message
+            error_sections = [
+                "🔴 Remote Command Failed",
+                "━━━━━━━━━━━━━━━━━━━━━━",
+                "Context:",
+                f"  Remote Directory: {remote_cwd}",
+                f"  Working Directory: {config.working_dir}",
+                "",
+                "Connection:",
+                f"  Host: {config.host}",
+                f"  User: {config.username}",
+                "",
+                "Command:",
+                f"  {full_cmd}",
+                "",
+                "Error Details:",
+                f"  Exit Code: {exit_code}",
+                f"  stderr: {error or 'None'}",
+                f"  stdout: {output or 'None'}",
+            ]
+            raise click.ClickException("\n".join(error_sections))
+
+        # Return CompletedProcess for compatibility
+        return subprocess.CompletedProcess(
+            args=full_cmd,
+            returncode=exit_code,
+            stdout=output,
+            stderr=error,
+        )
+
+    except paramiko.SSHException as e:
+        raise click.ClickException(f"SSH connection failed: {e!s}")
+    except Exception as e:
+        raise click.ClickException(f"Command failed: {e!s}")
+    finally:
+        ssh.close()
