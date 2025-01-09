@@ -94,16 +94,16 @@ class DB:
             session.close()
 
     def upsert_remote(
-            self,
-            username: str,
-            host: str,
-            project_name: str,
-            container_name: str | None = None,
-            conda_env: str | None = None,
-            alias: str | None = None,
-            *,
-            update_timestamp: bool = True,
-        ) -> Remote:
+        self,
+        username: str,
+        host: str,
+        project_name: str,
+        container_name: str | None = None,
+        conda_env: str | None = None,
+        alias: str | None = None,
+        *,
+        update_timestamp: bool = True,
+    ) -> Remote:
         """Create or update a remote entry and associate it with a project.
 
         Also handles updating last_used timestamp and project associations.

@@ -39,30 +39,43 @@ def remote_cmd(
         remote_cwd = stdout.read().decode().strip()
 
         # Prepare command string
-        cmd_str = " && ".join(command) if isinstance(command, list) else command
+        cmd_str = " ".join(command) if isinstance(command, list) else command
         if config.working_dir and use_working_dir:
             full_cmd = f"mkdir -p {config.working_dir} && cd {config.working_dir} && {cmd_str}"
         else:
             full_cmd = cmd_str
 
-        if interactive:
-            # For interactive commands, use subprocess since paramiko doesn't handle interactive well
-            ssh.close()
-            return subprocess.run(
-                ["ssh", f"{config.username}@{config.host}", full_cmd],
-                stdin=sys.stdin,
-                stdout=sys.stdout,
-                stderr=sys.stderr,
-                text=True, check=False,
-            )
+        # Execute command with PTY
+        transport = ssh.get_transport()
+        channel = transport.open_session()
+        channel.get_pty()
+        channel.exec_command(full_cmd)
 
-        # Execute command
-        stdin, stdout, stderr = ssh.exec_command(full_cmd)
-        exit_code = stdout.channel.recv_exit_status()
+        output = []
+        error = []
 
-        # Get output
-        output = stdout.read().decode()
-        error = stderr.read().decode()
+        while True:
+            # Read stdout
+            if channel.recv_ready():
+                data = channel.recv(1024).decode()
+                sys.stdout.write(data)
+                sys.stdout.flush()
+                output.append(data)
+
+            # Read stderr
+            if channel.recv_stderr_ready():
+                data = channel.recv_stderr(1024).decode()
+                sys.stderr.write(data)
+                sys.stderr.flush()
+                error.append(data)
+
+            # Check if the channel is closed
+            if channel.exit_status_ready():
+                break
+
+        exit_code = channel.recv_exit_status()
+        output_str = "".join(output)
+        error_str = "".join(error)
 
         if exit_code != 0:
             # Format error message
@@ -82,8 +95,8 @@ def remote_cmd(
                 "",
                 "Error Details:",
                 f"  Exit Code: {exit_code}",
-                f"  stderr: {error or 'None'}",
-                f"  stdout: {output or 'None'}",
+                f"  stderr: {error_str or 'None'}",
+                f"  stdout: {output_str or 'None'}",
             ]
             raise click.ClickException("\n".join(error_sections))
 
@@ -91,8 +104,8 @@ def remote_cmd(
         return subprocess.CompletedProcess(
             args=full_cmd,
             returncode=exit_code,
-            stdout=output,
-            stderr=error,
+            stdout=output_str,
+            stderr=error_str,
         )
 
     except paramiko.SSHException as e:

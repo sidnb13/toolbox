@@ -2,23 +2,22 @@ import subprocess
 from pathlib import Path
 
 import click
-import pkg_resources
 
 from .helpers import RemoteConfig, remote_cmd
 
 
 def setup_conda_env(username: str, host: str, env_name: str = None) -> None:
-    """Setup conda environment on remote host"""
+    """Setup conda environment on remote host."""  # noqa: D401
     if not env_name:
         result = subprocess.run(
-            ["conda", "info", "--envs"], capture_output=True, text=True
+            ["conda", "info", "--envs"], capture_output=True, text=True, check=False,
         )
         env_name = next(
             line.split()[0] for line in result.stdout.splitlines() if "*" in line
         )
 
     project_root = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False,
     ).stdout.strip()
     project_dir = Path(project_root).name
 
@@ -74,7 +73,6 @@ def setup_conda_env(username: str, host: str, env_name: str = None) -> None:
 
 def sync_project(remote_config: RemoteConfig, project_name: str) -> None:
     """Sync project files with remote host"""
-
     project_root = Path.cwd()
     # Create remote directories
     remote_cmd(

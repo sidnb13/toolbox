@@ -106,9 +106,9 @@ def start_container(
     remote_config: Optional[RemoteConfig] = None,
     build=False,
 ) -> None:
-    def cmd_wrap(cmd, interactive=False):
+    def cmd_wrap(cmd):
         return (
-            remote_cmd(remote_config, cmd, interactive=interactive)
+            remote_cmd(remote_config, cmd, interactive=True)
             if remote_config
             else subprocess.run(
                 cmd,
@@ -116,8 +116,6 @@ def start_container(
                 stderr=None,  # Show output in real-time
                 text=True, check=False,
             )
-            if not interactive
-            else os.execvp(cmd[0], cmd)
         )
 
     service_name = project_name.lower()
@@ -140,4 +138,4 @@ def start_container(
     if build:
         base_cmd.append("--build")
     base_cmd.append(service_name)
-    cmd_wrap(base_cmd, interactive=True)
+    cmd_wrap(base_cmd)
