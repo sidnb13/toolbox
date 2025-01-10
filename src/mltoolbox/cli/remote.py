@@ -13,7 +13,7 @@ from mltoolbox.utils.docker import (
     start_container,
     verify_env_vars,
 )
-from mltoolbox.utils.remote import setup_conda_env, sync_project
+from mltoolbox.utils.remote import fetch_remote, setup_conda_env, sync_project
 
 db = DB()
 
@@ -23,9 +23,11 @@ def remote():
     """Manage remote development environment."""
     load_dotenv(".env")
 
+
 @remote.command()
 def provision():
     pass
+
 
 @remote.command()
 @click.argument("host_or_alias")
@@ -37,7 +39,9 @@ def provision():
     default="ssh",
     help="Connection mode",
 )
-@click.option("--env-name", help="Conda environment name (for conda mode)")
+@click.option(
+    "--env-name", default="mltoolbox", help="Conda environment name (for conda mode)"
+)
 @click.option("--force-rebuild", is_flag=True, help="force rebuild remote container")
 @click.option(
     "--forward-ports",
@@ -147,11 +151,14 @@ def connect(
         sync_project(remote_config, project_name)
         click.echo("🚀 Starting remote container...")
         start_container(
-            project_name, project_name, remote_config=remote_config, build=force_rebuild,
+            project_name,
+            project_name,
+            remote_config=remote_config,
+            build=force_rebuild,
         )
     elif mode == "conda":
         click.echo("🔧 Setting up conda environment...")
-        setup_conda_env(username, host, env_name)
+        setup_conda_env(remote_config, env_name)
 
     if mode == "container":
         cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {project_name.lower()} zsh"
@@ -165,16 +172,21 @@ def connect(
     ssh_args = [
         "ssh",
         "-A",  # Forward SSH agent
-        "-o", "ControlMaster=no",
-        "-o", "ExitOnForwardFailure=no",
-        "-o", "ServerAliveInterval=60",
-        "-o", "ServerAliveCountMax=3",
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ExitOnForwardFailure=no",
+        "-o",
+        "ServerAliveInterval=60",
+        "-o",
+        "ServerAliveCountMax=3",
     ]
 
     # Add port forwarding arguments
     for port_mapping in forward_ports:
-        local_port, remote_port = port_mapping.split(":")
-        ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
+        if port_mapping:
+            local_port, remote_port = port_mapping.split(":")
+            ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
 
     # Add remaining SSH arguments
     ssh_args.extend(["-t", f"{username}@{host}", cmd])
@@ -208,6 +220,7 @@ def list():  # noqa: A001
                     click.echo(f"    - {project.name}")
                     click.echo(f"      Container: {project.container_name}")
 
+
 @remote.command()
 @click.argument("host_or_alias")
 def remove(host_or_alias: str):
@@ -226,3 +239,32 @@ def sync(host_or_alias):
     remote_config = RemoteConfig(host=remote.host, username=remote.username)
     sync_project(remote_config, project_name)
     click.echo(f"Synced project files with remote host {host_or_alias}")
+
+
+@remote.command()
+@click.argument("host_or_alias")
+@click.argument("remote_path")
+@click.option(
+    "--local-path",
+    "-l",
+    default=".",
+    help="Local path to download to",
+)
+@click.option(
+    "--exclude",
+    "-e",
+    help="Comma-separated patterns to exclude (e.g., 'checkpoints,wandb')",
+)
+def fetch(host_or_alias, remote_path, local_path, exclude):
+    """Fetch files/directories from remote host to local."""
+    exclude_patterns = exclude.split(",") if exclude else []
+
+    remote = db.get_remote_fuzzy(host_or_alias)
+    remote_config = RemoteConfig(host=remote.host, username=remote.username)
+
+    fetch_remote(
+        remote_config=remote_config,
+        remote_path=remote_path,
+        local_path=local_path,
+        exclude=exclude_patterns,
+    )

@@ -16,7 +16,7 @@ from mltoolbox.utils.templates import generate_project_files
 )
 def init(
     project_name: str,
-    use_ray: bool,
+    ray: bool,
     force: bool = False,
     inside_project: bool = False,
 ):
@@ -67,7 +67,7 @@ def init(
     generate_project_files(
         project_dir,
         project_name=project_name,
-        ray=use_ray,
+        ray=ray,
         env_vars=template_env,
     )
 
