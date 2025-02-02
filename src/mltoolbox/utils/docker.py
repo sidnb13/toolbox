@@ -17,24 +17,26 @@ def check_docker_group(remote: RemoteConfig | None = None) -> None:
     """Check if user is in docker group and add if needed."""
     if remote:
         try:
-            # Check if user is in docker group, add if not
+            # Just add to docker group if needed, don't try to refresh membership
             remote_cmd(
                 remote,
                 [
-                    "groups | grep -q docker || "
-                    "(sudo groupadd -f docker && "
-                    "sudo usermod -aG docker $USER && "
-                    "newgrp docker)"
+                    "if ! groups | grep -q docker; then "
+                    "sudo groupadd -f docker && "
+                    "sudo usermod -aG docker $USER; "
+                    "fi"
                 ],
-                interactive=True,  # Use interactive mode since newgrp needs it
+                interactive=True,
             )
         except Exception as e:
             raise click.ClickException(f"Failed to setup docker group: {e}")
     else:
-        # Local docker group check
+        # Local docker group check remains the same
         username = pwd.getpwuid(os.getuid()).pw_name
         try:
-            if "docker" not in [g.gr_name for g in grp.getgrall() if username in g.gr_mem]:
+            if "docker" not in [
+                g.gr_name for g in grp.getgrall() if username in g.gr_mem
+            ]:
                 subprocess.run(
                     ["sudo", "usermod", "-aG", "docker", username],
                     check=True,
@@ -70,7 +72,9 @@ def verify_env_vars(remote: Optional[RemoteConfig] = None) -> None:
 
 
 def get_image_digest(
-    image: str, remote: bool = False, remote_config: Optional[RemoteConfig] = None,
+    image: str,
+    remote: bool = False,
+    remote_config: Optional[RemoteConfig] = None,
 ) -> str:
     def docker_cmd(cmd):
         return (
@@ -83,21 +87,62 @@ def get_image_digest(
         git_name = os.getenv("GIT_NAME")
         github_token = os.getenv("GITHUB_TOKEN")
         docker_cmd(
-            ["docker", "login", "ghcr.io", "-u", git_name, "--password-stdin"],
+            ["sudo", "docker", "login", "ghcr.io", "-u", git_name, "--password-stdin"],
         ).input = github_token.encode()
 
-        result = docker_cmd(["docker", "manifest", "inspect", image])
+        result = docker_cmd(["sudo", "docker", "manifest", "inspect", image])
         if result.returncode == 0:
             for line in result.stdout.splitlines():
                 if '"digest":' in line:
                     return line.split(":")[2].strip(' ",')
     else:
         result = docker_cmd(
-            ["docker", "image", "inspect", image, "--format={{index .Id}}"],
+            ["sudo", "docker", "image", "inspect", image, "--format={{index .Id}}"],
         )
         if result.returncode == 0:
             return result.stdout.strip().split(":")[1]
     return "none"
+
+
+def configure_nvidia_runtime(remote_config: Optional[RemoteConfig] = None) -> None:
+    """Configure NVIDIA container runtime to prevent container issues."""
+    # Set no-cgroups = false in nvidia config
+    config_cmd = [
+        "sudo sh -c 'echo \"no-cgroups = false\" >> /etc/nvidia-container-runtime/config.toml'"
+    ]
+
+    # Set cgroupfs as the cgroup driver in docker daemon config
+    docker_config = """
+    if [ ! -f /etc/docker/daemon.json ]; then
+        echo '{\"exec-opts\": [\"native.cgroupdriver=cgroupfs\"]}' | sudo tee /etc/docker/daemon.json;
+    else
+        sudo sed -i 's/systemd/cgroupfs/g' /etc/docker/daemon.json;
+    fi
+    """
+
+    # Commands to reload services and NVIDIA modules
+    reload_cmds = [
+        "sudo systemctl daemon-reload",
+        "sudo systemctl restart nvidia-persistenced",
+        "sudo systemctl restart docker",
+        "sudo rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia || true",
+        "sudo modprobe nvidia",
+        "sudo modprobe nvidia_uvm",
+    ]
+
+    try:
+        if remote_config:
+            remote_cmd(remote_config, config_cmd)
+            remote_cmd(remote_config, [docker_config])
+            for cmd in reload_cmds:
+                remote_cmd(remote_config, [cmd])
+        else:
+            subprocess.run(config_cmd, shell=True, check=True)
+            subprocess.run(docker_config, shell=True, check=True)
+            for cmd in reload_cmds:
+                subprocess.run(cmd, shell=True, check=True)
+    except (subprocess.CalledProcessError, Exception) as e:
+        raise click.ClickException(f"Failed to configure NVIDIA runtime: {e}")
 
 
 def start_container(
@@ -106,6 +151,8 @@ def start_container(
     remote_config: Optional[RemoteConfig] = None,
     build=False,
 ) -> None:
+    configure_nvidia_runtime(remote_config)
+
     def cmd_wrap(cmd):
         return (
             remote_cmd(remote_config, cmd, interactive=True)
@@ -114,7 +161,8 @@ def start_container(
                 cmd,
                 stdout=None,  # Show output in real-time
                 stderr=None,  # Show output in real-time
-                text=True, check=False,
+                text=True,
+                check=False,
             )
         )
 
@@ -134,7 +182,7 @@ def start_container(
     # cmd_wrap(ray_cmd, interactive=True)
 
     # Start in detached mode
-    base_cmd = ["docker", "compose", "up", "-d"]
+    base_cmd = ["sudo", "docker", "compose", "up", "-d"]
     if build:
         base_cmd.append("--build")
     base_cmd.append(service_name)

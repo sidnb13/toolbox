@@ -1,7 +1,6 @@
 import os
 import re
 from pathlib import Path
-
 import click
 from dotenv import load_dotenv
 from sqlalchemy.orm import joinedload
@@ -147,6 +146,7 @@ def connect(
 
     if mode == "container":
         check_docker_group(remote_config)
+        click.echo("✅ Docker group checked")  # Debug
         click.echo("📦 Syncing project files...")
         sync_project(remote_config, project_name)
         click.echo("🚀 Starting remote container...")

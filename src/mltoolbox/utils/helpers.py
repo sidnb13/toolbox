@@ -1,4 +1,3 @@
-
 import os
 import subprocess
 import sys
@@ -24,24 +23,33 @@ def remote_cmd(
     use_working_dir=True,
 ) -> subprocess.CompletedProcess:
     """Execute command on remote host using paramiko SSH."""
+
+    click.echo(f"🔄 Executing remote command on {config.host}")
+    click.echo(f"Command: {command}")
+
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     try:
+        click.echo(f"Connecting to {config.host}...")
         ssh.connect(
             hostname=config.host,
             username=config.username,
             timeout=10,
             look_for_keys=True,
-            allow_agent=True,  # This is the key part - use the SSH agent
+            allow_agent=True,
+            banner_timeout=60,  # Give more time for initial connection
         )
+        click.echo("✅ SSH connection established")
         _, stdout, _ = ssh.exec_command("pwd")
         remote_cwd = stdout.read().decode().strip()
 
         # Prepare command string
         cmd_str = " ".join(command) if isinstance(command, list) else command
         if config.working_dir and use_working_dir:
-            full_cmd = f"mkdir -p {config.working_dir} && cd {config.working_dir} && {cmd_str}"
+            full_cmd = (
+                f"mkdir -p {config.working_dir} && cd {config.working_dir} && {cmd_str}"
+            )
         else:
             full_cmd = cmd_str
 
@@ -109,7 +117,8 @@ def remote_cmd(
         )
 
     except paramiko.SSHException as e:
-        raise click.ClickException(f"SSH connection failed: {e!s}")
+        click.echo(f"❌ SSH connection failed: {str(e)}")
+        raise
     except Exception as e:
         raise click.ClickException(f"Command failed: {e!s}")
     finally:
