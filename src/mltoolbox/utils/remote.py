@@ -9,7 +9,10 @@ from .helpers import RemoteConfig, remote_cmd
 def setup_conda_env(remote_config: RemoteConfig, env_name: str = None) -> None:
     """Setup conda environment on remote host."""
     project_root = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False,
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=False,
     ).stdout.strip()
     project_name = Path(project_root).name
 
@@ -33,7 +36,9 @@ def setup_conda_env(remote_config: RemoteConfig, env_name: str = None) -> None:
     ]
 
     for cmd in setup_commands:
-        subprocess.run(["ssh", f"{remote_config.username}@{remote_config.host}", cmd], check=True)
+        subprocess.run(
+            ["ssh", f"{remote_config.username}@{remote_config.host}", cmd], check=True
+        )
 
     # Create remote directories
     remote_cmd(
@@ -48,41 +53,64 @@ def setup_conda_env(remote_config: RemoteConfig, env_name: str = None) -> None:
 
 
 def sync_project(remote_config: RemoteConfig, project_name: str) -> None:
-    """Sync project files with remote host"""
+    """Sync project files with remote host (one-way, local to remote)"""
     project_root = Path.cwd()
     # Create remote directories
     remote_cmd(
         remote_config,
-        [f"mkdir -p ~/.config/{project_name} ~/projects/{project_name}"],  # Single command string
+        [f"mkdir -p ~/.config/{project_name} ~/projects/{project_name}"],
         use_working_dir=False,
     )
 
-    # Sync project files
-    subprocess.run(
-        [
-            "rsync",
-            "-avz",
-            "--progress",
-            # Your existing excludes
-            "--exclude",
-            "__pycache__",
-            "--exclude",
-            "*.pyc",
-            "--exclude",
-            "node_modules",
-            "--exclude",
-            ".venv",
-            "--exclude",
-            "*.egg-info",
-            "--exclude",
-            "wandb",
-            "--exclude",
-            "outputs",
-            f"{project_root}/",
-            f"{remote_config.username}@{remote_config.host}:~/projects/{project_name}/",
-        ],
-        check=True,
-    )
+    # Build rsync command with one-way sync options
+    rsync_cmd = [
+        "rsync",
+        "-avz",  # archive, verbose, compress
+        "--progress",
+        "--stats",  # Show detailed transfer statistics
+        "-u",  # Update only (don't overwrite newer files)
+        "--ignore-existing",  # Don't overwrite existing files
+        "-e",
+        "ssh -o StrictHostKeyChecking=no",  # Less strict SSH checking
+        # Exclude patterns
+        "--exclude",
+        "__pycache__",
+        "--exclude",
+        "*.pyc",
+        "--exclude",
+        "node_modules",
+        "--exclude",
+        ".venv",
+        "--exclude",
+        "*.egg-info",
+        "--exclude",
+        "wandb",
+        "--exclude",
+        "outputs",
+        "--exclude",
+        ".git",
+        "--exclude",
+        ".DS_Store",
+        # Source and destination
+        f"{project_root}/",
+        f"{remote_config.username}@{remote_config.host}:~/projects/{project_name}/",
+    ]
+
+    try:
+        click.echo("📦 Starting one-way project sync (local → remote)...")
+        result = subprocess.run(rsync_cmd, check=True, capture_output=True, text=True)
+        click.echo("✅ Sync completed successfully!")
+
+    except subprocess.CalledProcessError as e:
+        click.echo("❌ Sync failed!")
+        click.echo(f"Exit code: {e.returncode}")
+        click.echo("Error output:")
+        click.echo(e.stderr)
+        click.echo("\nCommand output:")
+        click.echo(e.stdout)
+        raise click.ClickException(
+            "Failed to sync project files. See error details above."
+        )
 
 
 def fetch_remote(
@@ -116,10 +144,12 @@ def fetch_remote(
             rsync_cmd.extend(["--exclude", pattern])
 
     # Add source and destination
-    rsync_cmd.extend([
-        f"{remote_config.username}@{remote_config.host}:{remote_path}",
-        str(local_path),
-    ])
+    rsync_cmd.extend(
+        [
+            f"{remote_config.username}@{remote_config.host}:{remote_path}",
+            str(local_path),
+        ]
+    )
 
     click.echo(f"📥 Downloading {remote_path} to {local_path}...")
     subprocess.run(rsync_cmd, check=True)

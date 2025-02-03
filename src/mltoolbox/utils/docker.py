@@ -106,17 +106,24 @@ def get_image_digest(
 
 def configure_nvidia_runtime(remote_config: Optional[RemoteConfig] = None) -> None:
     """Configure NVIDIA container runtime to prevent container issues."""
-    # Set no-cgroups = false in nvidia config
+    # Check and set no-cgroups = false in nvidia config
+    check_config = (
+        "grep -q 'no-cgroups = false' /etc/nvidia-container-runtime/config.toml"
+    )
     config_cmd = [
-        "sudo sh -c 'echo \"no-cgroups = false\" >> /etc/nvidia-container-runtime/config.toml'"
+        f"""
+        if ! {check_config}; then
+            sudo sh -c 'echo "no-cgroups = false" >> /etc/nvidia-container-runtime/config.toml'
+        fi
+        """
     ]
 
-    # Set cgroupfs as the cgroup driver in docker daemon config
+    # Set cgroupfs as the cgroup driver in docker daemon config, checking if it exists
     docker_config = """
     if [ ! -f /etc/docker/daemon.json ]; then
-        echo '{\"exec-opts\": [\"native.cgroupdriver=cgroupfs\"]}' | sudo tee /etc/docker/daemon.json;
-    else
-        sudo sed -i 's/systemd/cgroupfs/g' /etc/docker/daemon.json;
+        echo '{"exec-opts": ["native.cgroupdriver=cgroupfs"]}' | sudo tee /etc/docker/daemon.json
+    elif ! grep -q 'cgroupfs' /etc/docker/daemon.json; then
+        sudo sed -i 's/systemd/cgroupfs/g' /etc/docker/daemon.json
     fi
     """
 
