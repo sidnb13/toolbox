@@ -62,17 +62,16 @@ def sync_project(remote_config: RemoteConfig, project_name: str) -> None:
         use_working_dir=False,
     )
 
-    # Build rsync command with one-way sync options
+    # Build rsync command with more aggressive sync options
     rsync_cmd = [
         "rsync",
         "-avz",  # archive, verbose, compress
         "--progress",
         "--stats",  # Show detailed transfer statistics
-        "-u",  # Update only (don't overwrite newer files)
-        "--ignore-existing",  # Don't overwrite existing files
+        "--delete",  # Delete extraneous files on destination
         "-e",
         "ssh -o StrictHostKeyChecking=no",  # Less strict SSH checking
-        # Exclude patterns
+        # Only exclude temporary/generated files
         "--exclude",
         "__pycache__",
         "--exclude",
@@ -83,12 +82,6 @@ def sync_project(remote_config: RemoteConfig, project_name: str) -> None:
         ".venv",
         "--exclude",
         "*.egg-info",
-        "--exclude",
-        "wandb",
-        "--exclude",
-        "outputs",
-        "--exclude",
-        ".git",
         "--exclude",
         ".DS_Store",
         # Source and destination

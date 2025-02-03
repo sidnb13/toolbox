@@ -2,6 +2,11 @@ name: Build Base Images
 
 on:
   workflow_dispatch:
+    inputs:
+      python_version:
+        description: 'Python version to build'
+        required: false
+        default: '3.12'
   push:
     branches: [master]
     paths:
@@ -19,8 +24,18 @@ permissions:
   statuses: write
 
 jobs:
-  build:
+  build-matrix:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python_version: ['3.10', '3.11', '3.12']
+        include:
+          - python_version: '3.10'
+            cuda_version: '12.1.0'
+          - python_version: '3.11'
+            cuda_version: '12.1.0'
+          - python_version: '3.12'
+            cuda_version: '12.1.0'
     steps:
       - uses: actions/checkout@v4
 
@@ -112,11 +127,9 @@ jobs:
         id: meta
         run: |
           VERSION=$(python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
-          PYTHON_VERSION="3.12"
-          CUDA_VERSION="12.1.0"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "python_version=$PYTHON_VERSION" >> $GITHUB_OUTPUT
-          echo "cuda_version=$CUDA_VERSION" >> $GITHUB_OUTPUT
+          echo "python_version=${{ matrix.python_version }}" >> $GITHUB_OUTPUT
+          echo "cuda_version=${{ matrix.cuda_version }}" >> $GITHUB_OUTPUT
 
       - name: Docker meta
         id: docker_meta
@@ -124,10 +137,10 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/ml-base
           tags: |
-            type=raw,value=latest
-            type=raw,value=${{ steps.meta.outputs.version }}
-            type=raw,value=py${{ steps.meta.outputs.python_version }}-cuda${{ steps.meta.outputs.cuda_version }}
-            type=raw,value=py${{ steps.meta.outputs.python_version }}-cuda${{ steps.meta.outputs.cuda_version }}-${{ steps.meta.outputs.version }}
+            type=raw,value=py${{ matrix.python_version }}
+            type=raw,value=py${{ matrix.python_version }}-${{ steps.meta.outputs.version }}
+            type=raw,value=py${{ matrix.python_version }}-cuda${{ matrix.cuda_version }}
+            type=raw,value=py${{ matrix.python_version }}-cuda${{ matrix.cuda_version }}-${{ steps.meta.outputs.version }}
             type=sha
 
       - name: Build and push base image
@@ -138,13 +151,12 @@ jobs:
           push: true
           tags: ${{ steps.docker_meta.outputs.tags }}
           build-args: |
-            CUDA_VERSION=12.1.0
-            PYTHON_VERSION=3.12
+            PYTHON_VERSION=${{ matrix.python_version }}
             GIT_EMAIL=${{ github.event.repository.owner.email || github.actor }}@users.noreply.github.com
             GIT_NAME=${{ github.repository_owner }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64,linux/arm64          
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

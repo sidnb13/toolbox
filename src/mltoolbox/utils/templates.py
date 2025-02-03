@@ -87,7 +87,11 @@ def render_template(template_name: str, **kwargs) -> str:
 
 
 def generate_project_files(
-    project_dir: Path, project_name: str, ray: bool, env_vars: dict
+    project_dir: Path,
+    project_name: str,
+    ray: bool,
+    env_vars: dict,
+    python_version: str = "3.12",
 ) -> None:
     """Generate project files from templates"""
     # Create directory structure
@@ -106,6 +110,7 @@ def generate_project_files(
         "project_name": project_name,
         "ray": ray,
         "container_name": project_name.lower(),
+        "python_version": python_version,
         **env_vars,
     }
 

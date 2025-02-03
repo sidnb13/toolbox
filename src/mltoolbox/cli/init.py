@@ -3,6 +3,7 @@ from pathlib import Path
 
 import click
 from dotenv import load_dotenv
+from sympy import python
 
 from mltoolbox.utils.templates import generate_project_files
 
@@ -12,21 +13,35 @@ from mltoolbox.utils.templates import generate_project_files
 @click.option("--ray/--no-ray", default=True, help="Include Ray setup")
 @click.option("--force", is_flag=True, help="Force overwrite existing files")
 @click.option(
-    "--inside-project", is_flag=True, help="Initialize inside existing project",
+    "--inside-project",
+    is_flag=True,
+    help="Initialize inside existing project",
+)
+@click.option(
+    "--python-version",
+    default="3.12",
+    type=click.Choice(["3.10", "3.11", "3.12"]),
+    help="Python version to use",
 )
 def init(
     project_name: str,
     ray: bool,
     force: bool = False,
     inside_project: bool = False,
+    python_version: str = "3.12",
 ):
     """Initialize a new ML project."""
     load_dotenv(".env")
     project_dir = Path(project_name) if not inside_project else Path.cwd()
     project_name = project_dir.name
 
-    if not force and any(project_dir.iterdir()) and not click.confirm(
-        f"Directory {project_name} exists. Continue?", default=True,
+    if (
+        not force
+        and any(project_dir.iterdir())
+        and not click.confirm(
+            f"Directory {project_name} exists. Continue?",
+            default=True,
+        )
     ):
         return
     # Build base image if it doesn't exist
@@ -47,6 +62,7 @@ def init(
 
     # Create template env variables
     template_env = {
+        "python_version": python_version,
         "git_name": git_name,
         "git_email": git_email,
         "github_token": github_token,
@@ -69,6 +85,7 @@ def init(
         project_name=project_name,
         ray=ray,
         env_vars=template_env,
+        python_version=python_version,
     )
 
     click.echo(f"✨ Project {project_name} initialized!")

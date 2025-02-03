@@ -120,8 +120,8 @@ def connect(
             for line in f:
                 if line.startswith("Host "):
                     current_host = line.split()[1].strip()
-                    # Skip this block if it matches our host or alias
-                    skip_block = current_host in (remote.alias, remote.host)
+                    # Skip this block if it matches our alias, regardless of host
+                    skip_block = current_host == remote.alias
                 if not skip_block:
                     existing_config.append(line)
                 elif not line.strip() or line.startswith("Host "):
