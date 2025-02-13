@@ -3,7 +3,6 @@ from pathlib import Path
 
 import click
 from dotenv import load_dotenv
-from sympy import python
 
 from mltoolbox.utils.templates import generate_project_files
 

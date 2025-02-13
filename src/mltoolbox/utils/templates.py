@@ -97,7 +97,6 @@ def generate_project_files(
     # Create directory structure
     (project_dir / "scripts").mkdir(exist_ok=True)
     (project_dir / "assets").mkdir(exist_ok=True)
-    (project_dir / ".devcontainer").mkdir(exist_ok=True)
 
     base_entrypoint = Path(
         pkg_resources.resource_filename("mltoolbox", "base/scripts/entrypoint.sh")
@@ -113,11 +112,7 @@ def generate_project_files(
         "python_version": python_version,
         **env_vars,
     }
-
-    # Generate devcontainer.json
-    devcontainer = render_template("devcontainer.json.j2", **context)
-    (project_dir / ".devcontainer" / "devcontainer.json").write_text(devcontainer)
-
+    
     # Generate docker-compose.yml
     docker_compose = render_template("docker-compose.yml.j2", **context)
     (project_dir / "docker-compose.yml").write_text(docker_compose)

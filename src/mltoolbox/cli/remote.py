@@ -12,7 +12,13 @@ from mltoolbox.utils.docker import (
     start_container,
     verify_env_vars,
 )
-from mltoolbox.utils.remote import fetch_remote, setup_conda_env, sync_project
+from mltoolbox.utils.helpers import remote_cmd
+from mltoolbox.utils.remote import (
+    fetch_remote,
+    setup_conda_env,
+    sync_project,
+    wait_for_host,
+)
 
 db = DB()
 
@@ -49,6 +55,22 @@ def provision():
     default=["8000:8000", "8265:8265"],
     help="Port forwarding",
 )
+@click.option(
+    "--wait/--no-wait",
+    default=False,
+    help="Wait for host to become available",
+)
+@click.option(
+    "--timeout",
+    default=None,
+    help="Maximum time to wait for host in seconds",
+)
+@click.option(
+    "--exclude",
+    "-e",
+    default="",
+    help="Comma-separated patterns to exclude (e.g., 'checkpoints,wandb')",
+)
 def connect(
     host_or_alias,
     alias,
@@ -57,6 +79,9 @@ def connect(
     env_name,
     force_rebuild,
     forward_ports,
+    wait,
+    timeout,
+    exclude,
 ):
     """Connect to remote development environment."""
     # Validate host IP address format
@@ -84,6 +109,13 @@ def connect(
         conda_env=env_name if mode == "conda" else None,
         alias=alias,
     )
+
+    if wait:
+        click.echo(f"Waiting for host {remote.host} to become available...")
+        if not wait_for_host(remote.host, timeout):
+            raise click.ClickException(
+                f"Timeout waiting for host {remote.host} after {timeout} seconds"
+            )
 
     remote_config = RemoteConfig(
         host=remote.host,
@@ -144,11 +176,18 @@ def connect(
 
     click.echo(f"Access your instance with `ssh {remote.alias}`")
 
+    click.echo("📁 Creating remote project directories...")
+    remote_cmd(
+        remote_config,
+        [f"mkdir -p ~/projects/{project_name}"],
+        use_working_dir=False,
+    )
+
     if mode == "container":
         check_docker_group(remote_config)
         click.echo("✅ Docker group checked")  # Debug
         click.echo("📦 Syncing project files...")
-        sync_project(remote_config, project_name)
+        sync_project(remote_config, project_name, exclude=exclude)
         click.echo("🚀 Starting remote container...")
         start_container(
             project_name,
@@ -231,13 +270,19 @@ def remove(host_or_alias: str):
 
 @remote.command()
 @click.argument("host_or_alias")
-def sync(host_or_alias):
+@click.option(
+    "--exclude",
+    "-e",
+    default="",
+    help="Comma-separated patterns to exclude (e.g., 'checkpoints,wandb')",
+)
+def sync(host_or_alias, exclude):
     """Sync project files with remote host."""
     project_name = Path.cwd().name
     # Get remote config
     remote = db.get_remote_fuzzy(host_or_alias)
     remote_config = RemoteConfig(host=remote.host, username=remote.username)
-    sync_project(remote_config, project_name)
+    sync_project(remote_config, project_name, exclude=exclude)
     click.echo(f"Synced project files with remote host {host_or_alias}")
 
 
@@ -253,6 +298,7 @@ def sync(host_or_alias):
 @click.option(
     "--exclude",
     "-e",
+    default="",
     help="Comma-separated patterns to exclude (e.g., 'checkpoints,wandb')",
 )
 def fetch(host_or_alias, remote_path, local_path, exclude):

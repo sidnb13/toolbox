@@ -1,9 +1,43 @@
 import subprocess
+import time
 from pathlib import Path
-
 import click
 
 from .helpers import RemoteConfig, remote_cmd
+
+
+def wait_for_host(host: str, timeout: int | None = None) -> bool:
+    """Wait for host to become available by checking both ping and SSH connectivity.
+
+    Args:
+        host: Hostname or IP address to check
+        timeout: Maximum time to wait in seconds, None for infinite
+
+    Returns:
+        bool: True if host becomes available, False if timeout reached
+    """
+    start_time = time.time()
+    click.echo(f"Waiting for host {host} to become available...")
+
+    def time_exceeded() -> bool:
+        return timeout and (time.time() - start_time) > timeout
+
+    remote_config = RemoteConfig(host=host, username="ubuntu")
+
+    while not time_exceeded():
+        try:
+            # Try to run a simple command
+            remote_cmd(
+                remote_config, ["echo 'testing connection'"], use_working_dir=False
+            )
+            click.echo("✅ Host is available and accepting SSH connections!")
+            return True
+        except Exception as e:
+            click.echo(f"Connection failed ({str(e)}), retrying...")
+            time.sleep(5)
+
+    click.echo(f"❌ Timeout reached after {timeout} seconds")
+    return False
 
 
 def setup_conda_env(remote_config: RemoteConfig, env_name: str = None) -> None:
@@ -52,7 +86,9 @@ def setup_conda_env(remote_config: RemoteConfig, env_name: str = None) -> None:
     sync_project(remote_config, project_name)
 
 
-def sync_project(remote_config: RemoteConfig, project_name: str) -> None:
+def sync_project(
+    remote_config: RemoteConfig, project_name: str, exclude: list[str] = None
+) -> None:
     """Sync project files with remote host (one-way, local to remote)"""
     project_root = Path.cwd()
     # Create remote directories
@@ -62,7 +98,20 @@ def sync_project(remote_config: RemoteConfig, project_name: str) -> None:
         use_working_dir=False,
     )
 
-    # Build rsync command with more aggressive sync options
+    # Default exclusions for temporary/generated files
+    default_excludes = [
+        "__pycache__",
+        "*.pyc",
+        "node_modules",
+        ".venv",
+        "*.egg-info",
+        ".DS_Store",
+    ]
+
+    # Combine default excludes with user-provided patterns
+    all_excludes = default_excludes + (exclude.split(",") or [])
+
+    # Build rsync command
     rsync_cmd = [
         "rsync",
         "-avz",  # archive, verbose, compress
@@ -71,36 +120,53 @@ def sync_project(remote_config: RemoteConfig, project_name: str) -> None:
         "--delete",  # Delete extraneous files on destination
         "-e",
         "ssh -o StrictHostKeyChecking=no",  # Less strict SSH checking
-        # Only exclude temporary/generated files
-        "--exclude",
-        "__pycache__",
-        "--exclude",
-        "*.pyc",
-        "--exclude",
-        "node_modules",
-        "--exclude",
-        ".venv",
-        "--exclude",
-        "*.egg-info",
-        "--exclude",
-        ".DS_Store",
-        # Source and destination
-        f"{project_root}/",
-        f"{remote_config.username}@{remote_config.host}:~/projects/{project_name}/",
     ]
+
+    # Add exclude patterns
+    for pattern in all_excludes:
+        rsync_cmd.extend(["--exclude", pattern])
+
+    # Add source and destination
+    rsync_cmd.extend(
+        [
+            f"{project_root}/",
+            f"{remote_config.username}@{remote_config.host}:~/projects/{project_name}/",
+        ]
+    )
 
     try:
         click.echo("📦 Starting one-way project sync (local → remote)...")
-        result = subprocess.run(rsync_cmd, check=True, capture_output=True, text=True)
-        click.echo("✅ Sync completed successfully!")
+
+        # Run rsync and stream output in real-time
+        process = subprocess.Popen(
+            rsync_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            bufsize=1,
+        )
+
+        # Print stdout in real-time
+        while True:
+            output = process.stdout.readline()
+            if output == "" and process.poll() is not None:
+                break
+            if output:
+                click.echo(output.rstrip())
+
+        if process.returncode == 0:
+            click.echo("✅ Sync completed successfully!")
+        else:
+            stderr = process.stderr.read()
+            raise subprocess.CalledProcessError(
+                process.returncode, rsync_cmd, stderr=stderr
+            )
 
     except subprocess.CalledProcessError as e:
         click.echo("❌ Sync failed!")
         click.echo(f"Exit code: {e.returncode}")
         click.echo("Error output:")
         click.echo(e.stderr)
-        click.echo("\nCommand output:")
-        click.echo(e.stdout)
         raise click.ClickException(
             "Failed to sync project files. See error details above."
         )

@@ -1,9 +1,0 @@
-{
-    "name": "{{ project_name }}",
-    "build": {
-        "context": "..",
-        "dockerfile": "../Dockerfile"
-    },
-    "workspaceFolder": "/workspace/{{ project_name }}",
-    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/{{ project_name }},type=bind",
-}

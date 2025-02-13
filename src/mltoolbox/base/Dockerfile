@@ -25,6 +25,7 @@ RUN apt-get update && \
     vim \
     zsh \
     net-tools \
+    unzip \
     software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update && \
