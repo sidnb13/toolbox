@@ -102,8 +102,7 @@ def connect(
     # Get or create/update remote and project
     remote = db.upsert_remote(
         username=username,
-        host=host
-        or host_or_alias,  # Use host if parsed from IP, otherwise use host_or_alias
+        host=host,
         project_name=project_name,
         container_name=container_name,
         conda_env=env_name if mode == "conda" else None,
@@ -204,7 +203,7 @@ def connect(
     elif mode == "ssh":
         cmd = f"cd ~/projects/{project_name} && zsh"
     elif mode == "conda":
-        cmd = f"cd ~/projects/{project_name} && conda activate {env_name} && zsh"
+        cmd = f"cd ~/projects/{project_name} && export PATH=$HOME/miniconda3/bin:$PATH && source $HOME/miniconda3/etc/profile.d/conda.sh && conda activate {env_name} && zsh"
 
     # Execute the SSH command with port forwarding for all modes
     # Build SSH command with port forwarding

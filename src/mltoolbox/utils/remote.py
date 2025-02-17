@@ -40,8 +40,16 @@ def wait_for_host(host: str, timeout: int | None = None) -> bool:
     return False
 
 
-def setup_conda_env(remote_config: RemoteConfig, env_name: str = None) -> None:
-    """Setup conda environment on remote host."""
+def setup_conda_env(
+    remote_config: RemoteConfig, env_name: str = None, python_version: str = "3.12"
+) -> None:
+    """Setup conda environment on remote host.
+
+    Args:
+        remote_config: Remote configuration containing username and host
+        env_name: Name of the conda environment to create
+        python_version: Python version to install (e.g. "3.12", "3.10")
+    """
     project_root = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         capture_output=True,
@@ -50,29 +58,35 @@ def setup_conda_env(remote_config: RemoteConfig, env_name: str = None) -> None:
     ).stdout.strip()
     project_name = Path(project_root).name
 
-    # Setup remote conda environment
-    setup_commands = [
-        # Install miniconda
-        "if [ ! -f ~/miniconda3/bin/conda ]; then "
-        "curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && "
-        "sh Miniconda3-latest-Linux-x86_64.sh -b && "
-        "rm Miniconda3-latest-Linux-x86_64.sh && "
-        "echo 'export PATH=~/miniconda3/bin:$PATH' >> ~/.bashrc && "
-        "~/miniconda3/bin/conda init bash && "
-        "~/miniconda3/bin/conda init zsh && "
-        "source ~/.bashrc; "
-        "fi",
-        # Create conda environment
-        f"export PATH=~/miniconda3/bin:$PATH && "
-        f"if ! conda env list | grep -q '^{env_name} '; then "
-        f"conda create -y -n {env_name} python=3.12; "
-        "fi",
-    ]
+    # Single command to handle everything
+    setup_command = f"""
+    # Download and install Miniconda if not present
+    if [ ! -f $HOME/miniconda3/bin/conda ]; then
+        wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+        bash Miniconda3-latest-Linux-x86_64.sh -b
+        rm Miniconda3-latest-Linux-x86_64.sh
+    fi
 
-    for cmd in setup_commands:
-        subprocess.run(
-            ["ssh", f"{remote_config.username}@{remote_config.host}", cmd], check=True
+    # Create the environment using absolute path
+    $HOME/miniconda3/bin/conda create -y -n {env_name} python={python_version}
+    """
+
+    try:
+        click.echo("Installing/updating conda and creating environment...")
+        result = subprocess.run(
+            ["ssh", f"{remote_config.username}@{remote_config.host}", setup_command],
+            check=True,
+            capture_output=True,
+            text=True,
         )
+        click.echo(result.stdout)
+    except subprocess.CalledProcessError as e:
+        click.echo("❌ Failed to setup conda environment")
+        if e.stdout:
+            click.echo(e.stdout)
+        if e.stderr:
+            click.echo(e.stderr)
+        raise
 
     # Create remote directories
     remote_cmd(
@@ -87,7 +101,7 @@ def setup_conda_env(remote_config: RemoteConfig, env_name: str = None) -> None:
 
 
 def sync_project(
-    remote_config: RemoteConfig, project_name: str, exclude: list[str] = None
+    remote_config: RemoteConfig, project_name: str, exclude: list = ""
 ) -> None:
     """Sync project files with remote host (one-way, local to remote)"""
     project_root = Path.cwd()

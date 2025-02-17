@@ -19,13 +19,14 @@ RUN uv pip install --system --no-cache-dir -r /tmp/requirements.txt && \
 
 # If python package exists, install it
 RUN python setup.py develop || true \
-    && uv pip install --system --no-cache-dir -e . || true
+    && uv pip install --system --no-cache-dir -e . || true \
+    && uv pip install --system ipdb
 
 COPY scripts/entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Run install script if exists
-RUN if [ -f install.sh ]; then bash install.sh; fi
+RUN if [ -f scripts/install.sh ]; then bash scripts/install.sh; fi
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["zsh"]

@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import click
@@ -16,6 +17,34 @@ class RemoteConfig:
     working_dir: Optional[str] = None
 
 
+def get_ssh_config(
+    alias: str, config_path: Path = "~/.config/mltoolbox/ssh/config"
+) -> dict:
+    """Parse SSH config and return settings for the given alias."""
+    ssh_config = paramiko.config.SSHConfig()
+
+    # Use custom config path if provided, otherwise fallback to default
+    config_paths = [
+        Path(config_path).expanduser(),
+        Path.home() / ".ssh" / "config",
+    ]
+
+    # Try reading from config files in order
+    config_found = False
+    for path in config_paths:
+        if path.exists():
+            with open(path) as f:
+                ssh_config.parse(f)
+            config_found = True
+
+    if not config_found:
+        raise click.ClickException("No SSH config file found")
+
+    # Get the specific config for this host alias
+    host_config = ssh_config.lookup(alias)
+    return host_config
+
+
 def remote_cmd(
     config: RemoteConfig,
     command: list[str],
@@ -24,6 +53,12 @@ def remote_cmd(
 ) -> subprocess.CompletedProcess:
     """Execute command on remote host using paramiko SSH."""
 
+    # Parse SSH config if the host looks like an alias
+    ssh_config = get_ssh_config(config.host)
+    actual_hostname = ssh_config.get("hostname", config.host)
+    actual_username = ssh_config.get("user", config.username)
+    identity_file = ssh_config.get("identityfile", [None])[0]
+
     click.echo(f"🔄 Executing remote command on {config.host}")
     click.echo(f"Command: {command}")
 
@@ -31,15 +66,21 @@ def remote_cmd(
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     try:
-        click.echo(f"Connecting to {config.host}...")
-        ssh.connect(
-            hostname=config.host,
-            username=config.username,
-            timeout=10,
-            look_for_keys=True,
-            allow_agent=True,
-            banner_timeout=60,  # Give more time for initial connection
-        )
+        click.echo(f"Connecting to {actual_hostname}...")
+        connect_kwargs = {
+            "hostname": actual_hostname,
+            "username": actual_username,
+            "timeout": 10,
+            "look_for_keys": True,
+            "allow_agent": True,
+            "banner_timeout": 60,
+        }
+
+        # Use identity file from ssh config if specified
+        if identity_file:
+            connect_kwargs["key_filename"] = identity_file
+
+        ssh.connect(**connect_kwargs)
         click.echo("✅ SSH connection established")
         _, stdout, _ = ssh.exec_command("pwd")
         remote_cwd = stdout.read().decode().strip()
@@ -95,8 +136,8 @@ def remote_cmd(
                 f"  Working Directory: {config.working_dir}",
                 "",
                 "Connection:",
-                f"  Host: {config.host}",
-                f"  User: {config.username}",
+                f"  Host: {actual_hostname}",
+                f"  User: {actual_username}",
                 "",
                 "Command:",
                 f"  {full_cmd}",

@@ -33,9 +33,12 @@ class Project(Base):
     container_name: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now())  # noqa: DTZ005
     remotes: Mapped[list[Remote]] = relationship(
-        "Remote", secondary="remote_projects", back_populates="projects",
+        "Remote",
+        secondary="remote_projects",
+        back_populates="projects",
     )
     conda_env: Mapped[str | None] = mapped_column(String, nullable=True)
+
 
 # Association table for many-to-many relationship
 remote_projects = Table(
@@ -57,7 +60,9 @@ class Remote(Base):
     last_used: Mapped[datetime] = mapped_column(DateTime, default=datetime.now())
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now())
     projects: Mapped[list[Project]] = relationship(
-        Project, secondary=remote_projects, back_populates="remotes",
+        Project,
+        secondary=remote_projects,
+        back_populates="remotes",
     )
 
 
@@ -158,6 +163,9 @@ class DB:
                     project.conda_env = conda_env
 
             if not remote:
+                # For new remotes, host is required
+                if not host:
+                    raise ValueError("Host is required when creating a new remote")
                 remote = Remote(
                     alias=alias,
                     username=username,
@@ -166,8 +174,10 @@ class DB:
                 )
                 session.add(remote)
             else:
+                # Only update fields that are explicitly provided
                 remote.username = username
-                remote.host = host
+                if host:  # Only update host if explicitly provided
+                    remote.host = host
                 remote.git_name = git_name
 
             if update_timestamp:
@@ -238,9 +248,7 @@ class DB:
 
             # Clean up orphaned projects
             orphaned_projects = (
-                session.query(Project)
-                .filter(~Project.remotes.any())
-                .all()
+                session.query(Project).filter(~Project.remotes.any()).all()
             )
             for project in orphaned_projects:
                 session.delete(project)

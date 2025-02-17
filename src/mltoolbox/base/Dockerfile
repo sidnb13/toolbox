@@ -7,6 +7,7 @@ ENV TZ=Etc/UTC \
     PATH="/usr/local/bin:${PATH}" \
     PYTHONPATH="/usr/local/lib/python${PYTHON_VERSION}/dist-packages:${PYTHONPATH}" \
     DEBIAN_FRONTEND=noninteractive
+    PYTHONBREAKPOINT=IPython.terminal.debugger.set_trace
 
 WORKDIR /workspace
 
@@ -47,7 +48,8 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     rm -rf /tmp/* && \
-    rm -rf /var/tmp/*
+    rm -rf /var/tmp/* \
+    git config --global core.editor vi
 
 # Install ray, pip, uv, and setup LSP
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python && \
