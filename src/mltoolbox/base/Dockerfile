@@ -6,7 +6,7 @@ ARG PYTHON_VERSION=3.12
 ENV TZ=Etc/UTC \
     PATH="/usr/local/bin:${PATH}" \
     PYTHONPATH="/usr/local/lib/python${PYTHON_VERSION}/dist-packages:${PYTHONPATH}" \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
     PYTHONBREAKPOINT=IPython.terminal.debugger.set_trace
 
 WORKDIR /workspace

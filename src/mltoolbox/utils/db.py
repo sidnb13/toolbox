@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     String,
     Table,
+    and_,
     create_engine,
     func,
     or_,
@@ -143,7 +144,9 @@ class DB:
                 .filter(
                     or_(
                         Remote.alias == alias,
-                        (Remote.host == host and Remote.username == username),
+                        and_(
+                            Remote.host == host, Remote.username == username
+                        ),  # Fixed line
                     ),
                 )
                 .first()
