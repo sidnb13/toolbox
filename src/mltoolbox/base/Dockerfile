@@ -11,7 +11,6 @@ ENV TZ=Etc/UTC \
 
 WORKDIR /workspace
 
-# Install all necessary system packages including development tools
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
@@ -33,9 +32,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     python${PYTHON_VERSION} \
     python${PYTHON_VERSION}-dev \
-    python${PYTHON_VERSION}-venv \
-    nvidia-cuda-toolkit \
-    nvidia-cuda-toolkit-gcc && \
+    python${PYTHON_VERSION}-venv && \
     ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python && \
     rm -f /usr/lib/python${PYTHON_VERSION}/EXTERNALLY-MANAGED && \
     # Install zsh theme
@@ -44,12 +41,13 @@ RUN apt-get update && \
     -p git && \
     chsh -s $(which zsh) && \
     echo "set -o vi" >> /root/.zshrc && \
+    # Set git editor
+    git config --global core.editor vi && \
     # Cleanup
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     rm -rf /tmp/* && \
-    rm -rf /var/tmp/* \
-    git config --global core.editor vi
+    rm -rf /var/tmp/*
 
 # Install ray, pip, uv, and setup LSP
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python && \
