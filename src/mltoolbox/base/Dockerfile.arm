@@ -11,35 +11,36 @@ ENV TZ=Etc/UTC \
 
 WORKDIR /workspace
 
+# Split the installation into multiple RUN commands for better error handling
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
-    curl \
-    git \
-    openssh-client \
-    sudo \
-    wget \
-    nvtop \
-    nano \
-    vim \
-    zsh \
-    net-tools \
-    unzip \
-    software-properties-common && \
-    # Install zsh theme
-    sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh)" -- \
-    -t robbyrussell \
-    -p git && \
-    chsh -s $(which zsh) && \
-    echo "set -o vi" >> /root/.zshrc && \
-    # Set git editor
-    git config --global core.editor vi && \
-    # Cleanup
+        build-essential \
+        cmake \
+        curl \
+        git \
+        openssh-client \
+        sudo \
+        wget \
+        nvtop \
+        nano \
+        vim \
+        zsh \
+        net-tools \
+        unzip \
+        software-properties-common && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    rm -rf /tmp/* && \
-    rm -rf /var/tmp/*
+    rm -rf /var/lib/apt/lists/*
+
+# Setup ZSH separately
+RUN wget -O /tmp/zsh-in-docker.sh https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh && \
+    chmod +x /tmp/zsh-in-docker.sh && \
+    /tmp/zsh-in-docker.sh -t robbyrussell -p git && \
+    rm /tmp/zsh-in-docker.sh
+
+# Configure shell and git
+RUN chsh -s $(which zsh) && \
+    echo "set -o vi" >> /root/.zshrc && \
+    git config --global core.editor vi
 
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
