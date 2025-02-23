@@ -17,6 +17,7 @@ from mltoolbox.utils.remote import (
     fetch_remote,
     setup_conda_env,
     sync_project,
+    update_env_file,
     wait_for_host,
 )
 
@@ -71,6 +72,11 @@ def provision():
     default="",
     help="Comma-separated patterns to exclude (e.g., 'checkpoints,wandb')",
 )
+@click.option(
+    "--arm",
+    is_flag=True,
+    help="Use ARM-specific Docker configuration",
+)
 def connect(
     host_or_alias,
     alias,
@@ -82,6 +88,7 @@ def connect(
     wait,
     timeout,
     exclude,
+    arm,
 ):
     """Connect to remote development environment."""
     # Validate host IP address format
@@ -188,12 +195,26 @@ def connect(
         click.echo("📦 Syncing project files...")
         sync_project(remote_config, project_name, exclude=exclude)
         click.echo("🚀 Starting remote container...")
+
+        # Set ARM-specific environment variables if needed
+        if arm:
+            env_updates = {
+                "DOCKERFILE": "./base/Dockerfile.arm",
+                "NVIDIA_DRIVER_CAPABILITIES": "all",
+                "NVIDIA_VISIBLE_DEVICES": "all",
+                "NV_PRIME_RENDER_OFFLOAD": "1",
+                "GLX_VENDOR_LIBRARY_NAME": "nvidia",
+            }
+            click.echo("🔧 Updating environment configuration for ARM...")
+            update_env_file(remote_config, project_name, env_updates)
+
         start_container(
             project_name,
             project_name,
             remote_config=remote_config,
             build=force_rebuild,
         )
+
     elif mode == "conda":
         click.echo("🔧 Setting up conda environment...")
         setup_conda_env(remote_config, env_name)
@@ -227,7 +248,7 @@ def connect(
             ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
 
     # Add remaining SSH arguments
-    ssh_args.extend(["-t", f"{username}@{host}", cmd])
+    ssh_args.extend(["-t", f"{remote.username}@{remote.host}", cmd])
 
     # Execute SSH command
     os.execvp("ssh", ssh_args)  # noqa: S606

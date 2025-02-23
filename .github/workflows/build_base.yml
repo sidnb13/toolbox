@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       python_version:
-        description: 'Python version to build'
+        description: "Python version to build"
         required: false
-        default: '3.12'
+        default: "3.12"
   push:
     branches: [master]
     paths:
@@ -28,14 +28,19 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python_version: ['3.10', '3.11', '3.12']
         include:
-          - python_version: '3.10'
-            cuda_version: '12.1.0'
-          - python_version: '3.11'
-            cuda_version: '12.1.0'
-          - python_version: '3.12'
-            cuda_version: '12.1.0'
+          # AMD64 builds with CUDA
+          - python_version: "3.10"
+            cuda_version: "12.1.0"
+            arch: "amd64"
+          - python_version: "3.11"
+            cuda_version: "12.1.0"
+            arch: "amd64"
+          - python_version: "3.12"
+            cuda_version: "12.1.0"
+            arch: "amd64"
+          # ARM64 build (no Python version, no CUDA)
+          - arch: "arm64"
     steps:
       - uses: actions/checkout@v4
 
@@ -137,10 +142,10 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/ml-base
           tags: |
-            type=raw,value=py${{ matrix.python_version }}
-            type=raw,value=py${{ matrix.python_version }}-${{ steps.meta.outputs.version }}
-            type=raw,value=py${{ matrix.python_version }}-cuda${{ matrix.cuda_version }}
-            type=raw,value=py${{ matrix.python_version }}-cuda${{ matrix.cuda_version }}-${{ steps.meta.outputs.version }}
+            # For AMD64 builds: py3.12-amd64, py3.11-amd64, etc.
+            ${{ matrix.python_version && format('type=raw,value=py{0}-{1}', matrix.python_version, matrix.arch) }}
+            # For ARM64 build: arm64
+            ${{ !matrix.python_version && format('type=raw,value={0}', matrix.arch) }}
             type=sha
 
       - name: Build and push base image
@@ -151,12 +156,13 @@ jobs:
           push: true
           tags: ${{ steps.docker_meta.outputs.tags }}
           build-args: |
-            PYTHON_VERSION=${{ matrix.python_version }}
+            ${{ matrix.python_version && format('PYTHON_VERSION={0}', matrix.python_version) }}
             GIT_EMAIL=${{ github.event.repository.owner.email || github.actor }}@users.noreply.github.com
             GIT_NAME=${{ github.repository_owner }}
+            ARCH=${{ matrix.arch }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64          
+          platforms: linux/${{ matrix.arch }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

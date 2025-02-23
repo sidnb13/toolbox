@@ -1,9 +1,44 @@
 import subprocess
 import time
 from pathlib import Path
+
 import click
 
 from .helpers import RemoteConfig, remote_cmd
+
+
+def update_env_file(remote_config: RemoteConfig, project_name: str, updates: dict):
+    """Update environment file with new values, preserving existing variables."""
+    # Read current env file content
+    result = remote_cmd(
+        remote_config,
+        [f"cat ~/projects/{project_name}/.env"],
+        capture_output=True,
+    )
+    current_env = result.stdout.decode() if result.stdout else ""
+
+    # Parse current env file
+    env_dict = {}
+    for line in current_env.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            try:
+                key, value = line.split("=", 1)
+                env_dict[key.strip()] = value.strip()
+            except ValueError:
+                continue  # Skip invalid lines
+
+    # Update with new values
+    env_dict.update(updates)
+
+    # Generate new env file content
+    new_env_content = "\n".join(f"{k}={v}" for k, v in env_dict.items())
+
+    # Write back to remote .env file
+    remote_cmd(
+        remote_config,
+        [f"cd ~/projects/{project_name} && echo '{new_env_content}' > .env"],
+    )
 
 
 def wait_for_host(host: str, timeout: int | None = None) -> bool:
@@ -120,6 +155,7 @@ def sync_project(
         ".venv",
         "*.egg-info",
         ".DS_Store",
+        ".git",
     ]
 
     # Combine default excludes with user-provided patterns
@@ -170,6 +206,35 @@ def sync_project(
 
         if process.returncode == 0:
             click.echo("✅ Sync completed successfully!")
+
+            # Initialize new git repo on remote
+            remote_cmd(
+                remote_config,
+                [
+                    f"cd ~/projects/{project_name} && "
+                    "git init && "
+                    "git config --local receive.denyCurrentBranch updateInstead"
+                ],
+                use_working_dir=False,
+            )
+
+            # Push current branch with history to remote
+            current_branch = subprocess.check_output(
+                ["git", "branch", "--show-current"], text=True
+            ).strip()
+
+            subprocess.run(
+                [
+                    "git",
+                    "push",
+                    "--force",
+                    f"ssh://{remote_config.username}@{remote_config.host}:22/~/projects/{project_name}",
+                    f"{current_branch}:refs/heads/{current_branch}",
+                ],
+                check=True,
+            )
+
+            click.echo("✅ Git history transferred successfully!")
         else:
             stderr = process.stderr.read()
             raise subprocess.CalledProcessError(
