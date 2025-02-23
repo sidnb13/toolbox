@@ -152,7 +152,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: src/mltoolbox/base
-          file: src/mltoolbox/base/Dockerfile
+          file: ${{ matrix.arch == 'arm64' && 'src/mltoolbox/base/Dockerfile.arm' || 'src/mltoolbox/base/Dockerfile' }}
           push: true
           tags: ${{ steps.docker_meta.outputs.tags }}
           build-args: |
