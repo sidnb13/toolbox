@@ -159,6 +159,8 @@ jobs:
           context: src/mltoolbox/base
           file: ${{ matrix.variant == 'gh200' && 'src/mltoolbox/base/Dockerfile.gh200' || 'src/mltoolbox/base/Dockerfile' }}
           platforms: linux/amd64
+          push: true
+          tags: ${{ steps.docker_meta.outputs.tags }} # Add this line
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
