@@ -1,6 +1,7 @@
 import os
 import re
 from pathlib import Path
+import subprocess
 import click
 from dotenv import load_dotenv
 from sqlalchemy.orm import joinedload
@@ -193,10 +194,15 @@ def connect(
     if mode == "container":
         check_docker_group(remote_config)
         click.echo("✅ Docker group checked")
-        click.echo("📦 Syncing project files...")
-        sync_project(remote_config, project_name, exclude=exclude)
-        click.echo("🚀 Starting remote container...")
 
+        # First ensure remote directory exists
+        remote_cmd(
+            remote_config,
+            [f"mkdir -p ~/projects/{project_name}"],
+            use_working_dir=False,
+        )
+
+        # Set up environment first
         env_updates = {
             "VARIANT": variant,
             "NVIDIA_DRIVER_CAPABILITIES": "all",
@@ -205,6 +211,8 @@ def connect(
         click.echo(f"🔧 Updating environment configuration for {variant}...")
         update_env_file(remote_config, project_name, env_updates)
 
+        # Start container with essential files
+        click.echo("🚀 Starting remote container...")
         start_container(
             project_name,
             project_name,
@@ -212,6 +220,8 @@ def connect(
             build=force_rebuild,
         )
 
+        # Just one sync for everything
+        sync_project(remote_config, project_name, exclude=exclude)
     elif mode == "conda":
         click.echo("🔧 Setting up conda environment...")
         setup_conda_env(remote_config, env_name)

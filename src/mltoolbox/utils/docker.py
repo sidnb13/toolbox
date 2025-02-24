@@ -14,22 +14,56 @@ from .helpers import RemoteConfig, remote_cmd
 
 
 def check_docker_group(remote: RemoteConfig | None = None) -> None:
-    """Check if user is in docker group and add if needed."""
+    """Check if Docker and NVIDIA are properly set up on host."""
     if remote:
         try:
-            # Just add to docker group if needed, don't try to refresh membership
-            remote_cmd(
-                remote,
-                [
-                    "if ! groups | grep -q docker; then "
-                    "sudo groupadd -f docker && "
-                    "sudo usermod -aG docker $USER; "
-                    "fi"
-                ],
-                interactive=True,
-            )
-        except Exception as e:
-            raise click.ClickException(f"Failed to setup docker group: {e}")
+            # Try a simple docker command first
+            remote_cmd(remote, ["docker ps"], use_working_dir=False)
+            click.echo("✅ Docker already set up")
+            return
+        except Exception:
+            # If that fails, do the full setup
+            click.echo("🔧 Setting up Docker and NVIDIA...")
+            try:
+                # Setup docker group
+                remote_cmd(
+                    remote,
+                    [
+                        "if ! groups | grep -q docker; then "
+                        "sudo groupadd -f docker && "
+                        "sudo usermod -aG docker $USER; "
+                        "fi"
+                    ],
+                    interactive=True,
+                )
+
+                # Configure NVIDIA runtime (only once)
+                remote_cmd(
+                    remote,
+                    [
+                        # Check if NVIDIA is already configured
+                        "if ! grep -q 'no-cgroups = false' /etc/nvidia-container-runtime/config.toml; then "
+                        "sudo sh -c 'echo \"no-cgroups = false\" >> /etc/nvidia-container-runtime/config.toml' && "
+                        # Set cgroupfs as cgroup driver
+                        "if [ ! -f /etc/docker/daemon.json ]; then "
+                        'echo \'{"exec-opts": ["native.cgroupdriver=cgroupfs"]}\' | sudo tee /etc/docker/daemon.json; '
+                        "elif ! grep -q 'cgroupfs' /etc/docker/daemon.json; then "
+                        "sudo sed -i 's/systemd/cgroupfs/g' /etc/docker/daemon.json; "
+                        "fi && "
+                        # Reload everything
+                        "sudo systemctl daemon-reload && "
+                        "sudo systemctl restart nvidia-persistenced && "
+                        "sudo systemctl restart docker && "
+                        "sudo rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia || true && "
+                        "sudo modprobe nvidia && "
+                        "sudo modprobe nvidia_uvm; "
+                        "fi"
+                    ],
+                    interactive=True,
+                )
+                click.echo("✅ Docker and NVIDIA setup complete")
+            except Exception as e:
+                raise click.ClickException(f"Failed to setup docker group: {e}")
     else:
         # Local docker group check remains the same
         username = pwd.getpwuid(os.getuid()).pw_name
@@ -104,61 +138,12 @@ def get_image_digest(
     return "none"
 
 
-def configure_nvidia_runtime(remote_config: Optional[RemoteConfig] = None) -> None:
-    """Configure NVIDIA container runtime to prevent container issues."""
-    # Check and set no-cgroups = false in nvidia config
-    check_config = (
-        "grep -q 'no-cgroups = false' /etc/nvidia-container-runtime/config.toml"
-    )
-    config_cmd = [
-        f"""
-        if ! {check_config}; then
-            sudo sh -c 'echo "no-cgroups = false" >> /etc/nvidia-container-runtime/config.toml'
-        fi
-        """
-    ]
-    # Set cgroupfs as the cgroup driver in docker daemon config, checking if it exists
-    docker_config = """
-    if [ ! -f /etc/docker/daemon.json ]; then
-        echo '{"exec-opts": ["native.cgroupdriver=cgroupfs"]}' | sudo tee /etc/docker/daemon.json
-    elif ! grep -q 'cgroupfs' /etc/docker/daemon.json; then
-        sudo sed -i 's/systemd/cgroupfs/g' /etc/docker/daemon.json
-    fi
-    """
-
-    # Commands to reload services and NVIDIA modules
-    reload_cmds = [
-        "sudo systemctl daemon-reload",
-        "sudo systemctl restart nvidia-persistenced",
-        "sudo systemctl restart docker",
-        "sudo rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia || true",
-        "sudo modprobe nvidia",
-        "sudo modprobe nvidia_uvm",
-    ]
-
-    try:
-        if remote_config:
-            remote_cmd(remote_config, config_cmd)
-            remote_cmd(remote_config, [docker_config])
-            for cmd in reload_cmds:
-                remote_cmd(remote_config, [cmd])
-        else:
-            subprocess.run(config_cmd, shell=True, check=True)
-            subprocess.run(docker_config, shell=True, check=True)
-            for cmd in reload_cmds:
-                subprocess.run(cmd, shell=True, check=True)
-    except (subprocess.CalledProcessError, Exception) as e:
-        raise click.ClickException(f"Failed to configure NVIDIA runtime: {e}")
-
-
 def start_container(
     project_name: str,
     container_name: str,
     remote_config: Optional[RemoteConfig] = None,
     build=False,
 ) -> None:
-    configure_nvidia_runtime(remote_config)
-
     def cmd_wrap(cmd):
         return (
             remote_cmd(remote_config, cmd, interactive=True)

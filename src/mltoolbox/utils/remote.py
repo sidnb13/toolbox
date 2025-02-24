@@ -13,9 +13,11 @@ def update_env_file(remote_config: RemoteConfig, project_name: str, updates: dic
     result = remote_cmd(
         remote_config,
         [f"cat ~/projects/{project_name}/.env"],
-        capture_output=True,
     )
-    current_env = result.stdout.decode() if result.stdout else ""
+    # Get current env content from result
+    current_env = (
+        result.stdout if isinstance(result, subprocess.CompletedProcess) else result
+    )
 
     # Parse current env file
     env_dict = {}
@@ -140,6 +142,7 @@ def sync_project(
 ) -> None:
     """Sync project files with remote host (one-way, local to remote)"""
     project_root = Path.cwd()
+
     # Create remote directories
     remote_cmd(
         remote_config,
@@ -155,26 +158,37 @@ def sync_project(
         ".venv",
         "*.egg-info",
         ".DS_Store",
-        ".git",
+        "wandb/",  # Weights & Biases logs
+        "outputs/",  # Common output directory
+        ".vscode-server/",  # VSCode server files
+        "*.swp",  # Vim swap files
+        ".idea/",  # PyCharm files
+        "dist/",  # Python distribution files
+        "build/",  # Build artifacts
+        ".git/modules/",
     ]
 
     # Combine default excludes with user-provided patterns
-    all_excludes = default_excludes + (exclude.split(",") or [])
+    all_excludes = default_excludes + (exclude.split(",") if exclude else [])
 
     # Build rsync command
     rsync_cmd = [
         "rsync",
         "-avz",  # archive, verbose, compress
-        "--progress",
+        "--progress",  # Show progress during transfer
         "--stats",  # Show detailed transfer statistics
         "--delete",  # Delete extraneous files on destination
+        "--no-perms",  # Don't sync permissions
+        "--no-owner",  # Don't sync owner
+        "--no-group",  # Don't sync group
+        "--chmod=Du=rwx,go=rx,Fu=rw,go=r",  # Set sane permissions
         "-e",
         "ssh -o StrictHostKeyChecking=no",  # Less strict SSH checking
     ]
 
     # Add exclude patterns
     for pattern in all_excludes:
-        rsync_cmd.extend(["--exclude", pattern])
+        rsync_cmd.extend(["--exclude", pattern.strip()])
 
     # Add source and destination
     rsync_cmd.extend(
@@ -185,7 +199,9 @@ def sync_project(
     )
 
     try:
-        click.echo("📦 Starting one-way project sync (local → remote)...")
+        click.echo("📦 Starting project sync...")
+        click.echo(f"From: {project_root}")
+        click.echo(f"To: {remote_config.host}:~/projects/{project_name}")
 
         # Run rsync and stream output in real-time
         process = subprocess.Popen(
@@ -206,35 +222,6 @@ def sync_project(
 
         if process.returncode == 0:
             click.echo("✅ Sync completed successfully!")
-
-            # Initialize new git repo on remote
-            remote_cmd(
-                remote_config,
-                [
-                    f"cd ~/projects/{project_name} && "
-                    "git init && "
-                    "git config --local receive.denyCurrentBranch updateInstead"
-                ],
-                use_working_dir=False,
-            )
-
-            # Push current branch with history to remote
-            current_branch = subprocess.check_output(
-                ["git", "branch", "--show-current"], text=True
-            ).strip()
-
-            subprocess.run(
-                [
-                    "git",
-                    "push",
-                    "--force",
-                    f"ssh://{remote_config.username}@{remote_config.host}:22/~/projects/{project_name}",
-                    f"{current_branch}:refs/heads/{current_branch}",
-                ],
-                check=True,
-            )
-
-            click.echo("✅ Git history transferred successfully!")
         else:
             stderr = process.stderr.read()
             raise subprocess.CalledProcessError(
@@ -244,8 +231,9 @@ def sync_project(
     except subprocess.CalledProcessError as e:
         click.echo("❌ Sync failed!")
         click.echo(f"Exit code: {e.returncode}")
-        click.echo("Error output:")
-        click.echo(e.stderr)
+        if e.stderr:
+            click.echo("Error output:")
+            click.echo(e.stderr)
         raise click.ClickException(
             "Failed to sync project files. See error details above."
         )
