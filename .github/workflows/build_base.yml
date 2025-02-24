@@ -29,18 +29,23 @@ jobs:
     strategy:
       matrix:
         include:
-          # AMD64 builds with CUDA
+          # Regular CUDA builds
           - python_version: "3.10"
             cuda_version: "12.6.3"
             arch: "amd64"
+            variant: "cuda"
           - python_version: "3.11"
             cuda_version: "12.6.3"
             arch: "amd64"
+            variant: "cuda"
           - python_version: "3.12"
             cuda_version: "12.6.3"
             arch: "amd64"
-          # ARM64 build (no Python version, no CUDA)
-          - arch: "arm64"
+            variant: "cuda"
+          # GH200 build
+          - python_version: "3.10.12"
+            arch: "amd64"
+            variant: "gh200"
     steps:
       - uses: actions/checkout@v4
 
@@ -126,7 +131,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
 
       - name: Get Version and Metadata
         id: meta
@@ -142,27 +147,18 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/ml-base
           tags: |
-            # For AMD64 builds: py3.12-amd64, py3.11-amd64, etc.
-            ${{ matrix.python_version && format('type=raw,value=py{0}-{1}', matrix.python_version, matrix.arch) }}
-            # For ARM64 build: arm64
-            ${{ !matrix.python_version && format('type=raw,value={0}', matrix.arch) }}
+            # For regular CUDA builds: py3.12-cuda, py3.11-cuda, etc.
+            ${{ matrix.variant == 'cuda' && format('type=raw,value=py{0}-cuda', matrix.python_version) }}
+            # For GH200 build: py3.10-gh200
+            ${{ matrix.variant == 'gh200' && format('type=raw,value=py{0}-gh200', matrix.python_version) }}
             type=sha
 
       - name: Build and push base image
         uses: docker/build-push-action@v5
         with:
           context: src/mltoolbox/base
-          file: ${{ matrix.arch == 'arm64' && 'src/mltoolbox/base/Dockerfile.arm' || 'src/mltoolbox/base/Dockerfile' }}
-          push: true
-          tags: ${{ steps.docker_meta.outputs.tags }}
-          build-args: |
-            ${{ matrix.python_version && format('PYTHON_VERSION={0}', matrix.python_version) }}
-            GIT_EMAIL=${{ github.event.repository.owner.email || github.actor }}@users.noreply.github.com
-            GIT_NAME=${{ github.repository_owner }}
-            ARCH=${{ matrix.arch }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/${{ matrix.arch }}
+          file: ${{ matrix.variant == 'gh200' && 'src/mltoolbox/base/Dockerfile.gh200' || 'src/mltoolbox/base/Dockerfile' }}
+          platforms: linux/amd64
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

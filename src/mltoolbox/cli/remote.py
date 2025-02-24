@@ -73,9 +73,10 @@ def provision():
     help="Comma-separated patterns to exclude (e.g., 'checkpoints,wandb')",
 )
 @click.option(
-    "--arm",
-    is_flag=True,
-    help="Use ARM-specific Docker configuration",
+    "--variant",
+    type=click.Choice(["cuda", "gh200"]),
+    default="cuda",
+    help="Base image variant to use",
 )
 def connect(
     host_or_alias,
@@ -88,7 +89,7 @@ def connect(
     wait,
     timeout,
     exclude,
-    arm,
+    variant,
 ):
     """Connect to remote development environment."""
     # Validate host IP address format
@@ -191,22 +192,18 @@ def connect(
 
     if mode == "container":
         check_docker_group(remote_config)
-        click.echo("✅ Docker group checked")  # Debug
+        click.echo("✅ Docker group checked")
         click.echo("📦 Syncing project files...")
         sync_project(remote_config, project_name, exclude=exclude)
         click.echo("🚀 Starting remote container...")
 
-        # Set ARM-specific environment variables if needed
-        if arm:
-            env_updates = {
-                "DOCKERFILE": "./base/Dockerfile.arm",
-                "NVIDIA_DRIVER_CAPABILITIES": "all",
-                "NVIDIA_VISIBLE_DEVICES": "all",
-                "NV_PRIME_RENDER_OFFLOAD": "1",
-                "GLX_VENDOR_LIBRARY_NAME": "nvidia",
-            }
-            click.echo("🔧 Updating environment configuration for ARM...")
-            update_env_file(remote_config, project_name, env_updates)
+        env_updates = {
+            "VARIANT": variant,
+            "NVIDIA_DRIVER_CAPABILITIES": "all",
+            "NVIDIA_VISIBLE_DEVICES": "all",
+        }
+        click.echo(f"🔧 Updating environment configuration for {variant}...")
+        update_env_file(remote_config, project_name, env_updates)
 
         start_container(
             project_name,

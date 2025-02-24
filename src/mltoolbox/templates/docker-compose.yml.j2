@@ -12,7 +12,6 @@ services:
         - GIT_EMAIL=${GIT_EMAIL}
         - GIT_NAME=${GIT_NAME}
         - PROJECT_NAME=${PROJECT_NAME}
-        - ARCH=${ARCH:-amd64}  # Default to amd64 if not specified
     volumes:
       - .:/workspace/${PROJECT_NAME}
       - ./assets:/workspace/${PROJECT_NAME}/assets
