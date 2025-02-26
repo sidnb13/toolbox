@@ -25,32 +25,39 @@ permissions:
 
 jobs:
   build-matrix:
-    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
-          # Regular CUDA builds
+          # Regular CUDA builds on x64 runners
           - python_version: "3.10"
             cuda_version: "12.6.3"
             arch: "linux/amd64"
             variant: "cuda"
+            runner: "ubuntu-latest"
           - python_version: "3.11"
             cuda_version: "12.6.3"
             arch: "linux/amd64"
             variant: "cuda"
+            runner: "ubuntu-latest"
           - python_version: "3.12"
             cuda_version: "12.6.3"
             arch: "linux/amd64"
             variant: "cuda"
-          # GH200 build - now with ARM support
+            runner: "ubuntu-latest"
+          # GH200 build on ARM64 runner
           - python_version: "3.10.12"
             arch: "linux/arm64"
             variant: "gh200"
+            runner: "ubuntu-22.04-arm"
+    
+    runs-on: ${{ matrix.runner }}
+    
     steps:
       - uses: actions/checkout@v4
 
-      # Free up disk space
+      # Free up disk space (only needed on x64 runners)
       - name: Free up disk space
+        if: matrix.arch == 'linux/amd64'
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc
@@ -66,7 +73,9 @@ jobs:
       - name: Install tomli
         run: pip install tomli
 
+      # Setup NVIDIA Container Toolkit (only for x64 runners)
       - name: Setup NVIDIA Container Toolkit
+        if: matrix.arch == 'linux/amd64'
         run: |
           sudo apt-get update
           sudo apt-get install -y curl ca-certificates
@@ -103,15 +112,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Only needed for x64 runners building for ARM64
       - name: Setup QEMU
+        if: matrix.arch != runner_arch
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          platforms: ${{ matrix.arch }}
 
       - name: Get Version and Metadata
         id: meta
@@ -140,7 +149,7 @@ jobs:
           file: ${{ matrix.variant == 'gh200' && 'src/mltoolbox/base/Dockerfile.gh200' || 'src/mltoolbox/base/Dockerfile' }}
           platforms: ${{ matrix.arch }}
           push: true
-          tags: ${{ steps.docker_meta.outputs.tags }} # Add this line
+          tags: ${{ steps.docker_meta.outputs.tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
