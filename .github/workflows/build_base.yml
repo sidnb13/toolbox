@@ -158,7 +158,7 @@ jobs:
         with:
           context: src/mltoolbox/base
           file: ${{ matrix.variant == 'gh200' && 'src/mltoolbox/base/Dockerfile.gh200' || 'src/mltoolbox/base/Dockerfile' }}
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.docker_meta.outputs.tags }} # Add this line
           labels: |

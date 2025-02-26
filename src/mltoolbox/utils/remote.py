@@ -165,7 +165,6 @@ def sync_project(
         ".idea/",  # PyCharm files
         "dist/",  # Python distribution files
         "build/",  # Build artifacts
-        ".git/modules/",
     ]
 
     # Combine default excludes with user-provided patterns

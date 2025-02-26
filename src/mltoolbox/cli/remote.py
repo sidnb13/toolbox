@@ -79,6 +79,11 @@ def provision():
     default="cuda",
     help="Base image variant to use",
 )
+@click.option(
+    "--python-version",
+    default=None,
+    help="Python version to use (e.g., '3.10', '3.11')",
+)
 def connect(
     host_or_alias,
     alias,
@@ -91,6 +96,7 @@ def connect(
     timeout,
     exclude,
     variant,
+    python_version,
 ):
     """Connect to remote development environment."""
     # Validate host IP address format
@@ -202,16 +208,23 @@ def connect(
             use_working_dir=False,
         )
 
+        sync_project(remote_config, project_name, exclude=exclude)
+
         # Set up environment first
         env_updates = {
             "VARIANT": variant,
             "NVIDIA_DRIVER_CAPABILITIES": "all",
             "NVIDIA_VISIBLE_DEVICES": "all",
         }
+
+        # Add Python version to environment if specified
+        if python_version:
+            env_updates["PYTHON_VERSION"] = python_version
+            click.echo(f"🐍 Setting Python version to {python_version}")
+
         click.echo(f"🔧 Updating environment configuration for {variant}...")
         update_env_file(remote_config, project_name, env_updates)
 
-        # Start container with essential files
         click.echo("🚀 Starting remote container...")
         start_container(
             project_name,
@@ -219,9 +232,6 @@ def connect(
             remote_config=remote_config,
             build=force_rebuild,
         )
-
-        # Just one sync for everything
-        sync_project(remote_config, project_name, exclude=exclude)
     elif mode == "conda":
         click.echo("🔧 Setting up conda environment...")
         setup_conda_env(remote_config, env_name)

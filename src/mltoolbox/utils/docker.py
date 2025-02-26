@@ -177,4 +177,5 @@ def start_container(
     if build:
         base_cmd.append("--build")
     base_cmd.append(service_name)
+    
     cmd_wrap(base_cmd)
