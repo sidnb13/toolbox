@@ -9,22 +9,41 @@ ENV TZ=Etc/UTC \
 
 WORKDIR /workspace
 
-# Install basic packages (excluding nvtop)
+# Install packages in smaller groups to identify the problematic one
+# Group 1: Essential build tools
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
-        cmake \
+        cmake && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Group 2: Network and download tools
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
         curl \
-        git \
-        openssh-client \
-        sudo \
         wget \
+        git \
+        net-tools && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Group 3: System utilities
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        sudo \
+        software-properties-common \
+        unzip && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Group 4: Editors and shells
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
         nano \
         vim \
         zsh \
-        net-tools \
-        unzip \
-        software-properties-common && \
+        openssh-client && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
