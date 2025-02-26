@@ -9,47 +9,39 @@ ENV TZ=Etc/UTC \
 
 WORKDIR /workspace
 
-# Install packages individually to identify the problematic one
-RUN apt-get update
+# Add ARM64 architecture and repositories
+RUN apt-get update && \
+    dpkg --add-architecture arm64 && \
+    sed -i "s/deb h/deb [arch=amd64] h/g" /etc/apt/sources.list && \
+    echo "# arm64 repositories" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal main restricted" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-updates main restricted" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal universe" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-updates universe" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal multiverse" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-updates multiverse" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-backports main restricted universe multiverse" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-security main restricted" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-security universe" >> /etc/apt/sources.list && \
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-security multiverse" >> /etc/apt/sources.list && \
+    apt-get update
 
-# Test curl
-RUN apt-get install -y --no-install-recommends curl && apt-get clean
-
-# Test git
-RUN apt-get update && apt-get install -y --no-install-recommends git && apt-get clean
-
-# Test openssh-client
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && apt-get clean
-
-# Test sudo
-RUN apt-get update && apt-get install -y --no-install-recommends sudo && apt-get clean
-
-# Test wget
-RUN apt-get update && apt-get install -y --no-install-recommends wget && apt-get clean
-
-# Test nvtop
-RUN apt-get update && apt-get install -y --no-install-recommends nvtop && apt-get clean
-
-# Test nano
-RUN apt-get update && apt-get install -y --no-install-recommends nano && apt-get clean
-
-# Test vim
-RUN apt-get update && apt-get install -y --no-install-recommends vim && apt-get clean
-
-# Test zsh
-RUN apt-get update && apt-get install -y --no-install-recommends zsh && apt-get clean
-
-# Test net-tools
-RUN apt-get update && apt-get install -y --no-install-recommends net-tools && apt-get clean
-
-# Test unzip
-RUN apt-get update && apt-get install -y --no-install-recommends unzip && apt-get clean
-
-# Test software-properties-common
-RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && apt-get clean
-
-# Clean up
-RUN rm -rf /var/lib/apt/lists/*
+# Install all packages in one go
+RUN apt-get install -y --no-install-recommends \
+        curl \
+        git \
+        openssh-client \
+        sudo \
+        wget \
+        nvtop \
+        nano \
+        vim \
+        zsh \
+        net-tools \
+        unzip \
+        software-properties-common && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Setup ZSH separately
 RUN wget -O /tmp/zsh-in-docker.sh https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh && \
