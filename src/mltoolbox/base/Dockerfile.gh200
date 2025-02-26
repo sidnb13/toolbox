@@ -9,41 +9,21 @@ ENV TZ=Etc/UTC \
 
 WORKDIR /workspace
 
-# Install packages in smaller groups to identify the problematic one
-# Group 1: Essential build tools
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        build-essential \
-        cmake && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Group 2: Network and download tools
+# Install packages (excluding build-essential and cmake)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
-        wget \
         git \
-        net-tools && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Group 3: System utilities
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+        openssh-client \
         sudo \
-        software-properties-common \
-        unzip && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Group 4: Editors and shells
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+        wget \
+        nvtop \
         nano \
         vim \
         zsh \
-        openssh-client && \
+        net-tools \
+        unzip \
+        software-properties-common && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
