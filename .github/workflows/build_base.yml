@@ -49,9 +49,9 @@ jobs:
             arch: "linux/arm64"
             variant: "gh200"
             runner: "ubuntu-22.04-arm"
-    
+
     runs-on: ${{ matrix.runner }}
-    
+
     steps:
       - uses: actions/checkout@v4
 
@@ -112,9 +112,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Only needed for x64 runners building for ARM64
       - name: Setup QEMU
-        if: matrix.arch != runner_arch
+        if: contains(matrix.runner, 'arm') == false && matrix.arch == 'linux/arm64'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
