@@ -21,7 +21,6 @@ RUN apt-get update && \
         openssh-client \
         sudo \
         wget \
-        nvtop \
         nano \
         vim \
         zsh \

@@ -32,19 +32,19 @@ jobs:
           # Regular CUDA builds
           - python_version: "3.10"
             cuda_version: "12.6.3"
-            arch: "amd64"
+            arch: "linux/amd64"
             variant: "cuda"
           - python_version: "3.11"
             cuda_version: "12.6.3"
-            arch: "amd64"
+            arch: "linux/amd64"
             variant: "cuda"
           - python_version: "3.12"
             cuda_version: "12.6.3"
-            arch: "amd64"
+            arch: "linux/amd64"
             variant: "cuda"
-          # GH200 build
+          # GH200 build - now with ARM support
           - python_version: "3.10.12"
-            arch: "amd64"
+            arch: "linux/arm64"
             variant: "gh200"
     steps:
       - uses: actions/checkout@v4
@@ -164,5 +164,4 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            com.docker.image.architecture=amd64,arm64  # Add this line to indicate compatibility
           outputs: type=registry
