@@ -5,13 +5,11 @@ ARG PYTHON_VERSION=3.10.12
 # Combine environment variable settings
 ENV TZ=Etc/UTC \
     PATH="/usr/local/bin:${PATH}" \
-    PYTHONPATH="/usr/local/lib/python${PYTHON_VERSION}/dist-packages:${PYTHONPATH}" \
-    DEBIAN_FRONTEND=noninteractive \
     PYTHONBREAKPOINT=IPython.terminal.debugger.set_trace
 
 WORKDIR /workspace
 
-# Split the installation into multiple RUN commands for better error handling
+# Install basic packages (excluding nvtop)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
@@ -21,7 +19,6 @@ RUN apt-get update && \
         openssh-client \
         sudo \
         wget \
-        nvtop \
         nano \
         vim \
         zsh \
