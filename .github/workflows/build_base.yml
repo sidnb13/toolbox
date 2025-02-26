@@ -44,7 +44,7 @@ jobs:
             variant: "cuda"
           # GH200 build
           - python_version: "3.10.12"
-            arch: "amd64"
+            arch: "arm64"
             variant: "gh200"
     steps:
       - uses: actions/checkout@v4
