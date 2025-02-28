@@ -13,19 +13,108 @@ import click
 from .helpers import RemoteConfig, remote_cmd
 
 
-def check_docker_group(remote: RemoteConfig | None = None) -> None:
-    """Check if Docker and NVIDIA are properly set up on host."""
-    if remote:
-        try:
-            # Try a simple docker command first
-            remote_cmd(remote, ["docker ps"], use_working_dir=False)
-            click.echo("✅ Docker already set up")
-            return
-        except Exception:
-            # If that fails, do the full setup
-            click.echo("🔧 Setting up Docker and NVIDIA...")
-            try:
+def check_docker_group(remote: RemoteConfig) -> None:
+    """Check if Docker is properly configured and user is in docker group."""
+    try:
+        # Check if docker is running by listing containers
+        remote_cmd(remote, ["sudo docker ps -q"], interactive=True)
+
+        # Check if docker daemon.json has cgroupfs configured
+        result = remote_cmd(
+            remote,
+            [
+                "if [ -f /etc/docker/daemon.json ] && "
+                '(grep -q \'"native.cgroupdriver":"cgroupfs"\' /etc/docker/daemon.json || '
+                "grep -q '\"native.cgroupdriver=cgroupfs\"' /etc/docker/daemon.json); then "
+                "echo 'docker_configured'; "
+                "else "
+                "echo 'docker_needs_config'; "
+                "fi"
+            ],
+            interactive=True,
+        )
+        docker_needs_changes = "docker_needs_config" in result.stdout
+
+        # Check if NVIDIA is configured
+        result = remote_cmd(
+            remote,
+            [
+                "if [ -f /lib/udev/rules.d/71-nvidia-dev-char.rules ] && "
+                "command -v nvidia-ctk >/dev/null 2>&1; then "
+                "echo 'nvidia_configured'; "
+                "else "
+                "echo 'nvidia_needs_config'; "
+                "fi"
+            ],
+            interactive=True,
+        )
+        nvidia_needs_changes = "nvidia_needs_config" in result.stdout
+
+        # Check for running containers
+        result = remote_cmd(remote, ["sudo docker ps -q"], interactive=True)
+        running_containers = (
+            result.stdout.strip().split("\n") if result.stdout.strip() else []
+        )
+
+        # If any changes are needed, warn the user
+        if docker_needs_changes or nvidia_needs_changes:
+            if running_containers:
+                click.echo(
+                    f"⚠️ Found {len(running_containers)} running containers on the remote machine"
+                )
+
+            if docker_needs_changes:
+                click.echo("⚠️ Docker cgroup driver needs to be updated to cgroupfs")
+
+            if nvidia_needs_changes:
+                click.echo("⚠️ NVIDIA device symlinks need to be configured")
+
+            if running_containers:
+                click.echo(
+                    "⚠️ These changes may restart Docker and disrupt running containers"
+                )
+
+            # Add options to continue, skip, or abort
+            choice = click.prompt(
+                "Choose an option",
+                type=click.Choice(["continue", "skip", "abort"]),
+                default="skip",
+            )
+
+            if choice == "abort":
+                raise click.Abort()
+            elif choice == "skip":
+                click.echo("⏭️ Skipping Docker configuration")
+                return
+
+            if docker_needs_changes:
+                click.echo("🔧 Updating Docker cgroup driver configuration...")
+                remote_cmd(
+                    remote,
+                    [
+                        # Check if docker daemon.json exists
+                        "if [ -f /etc/docker/daemon.json ]; then "
+                        # If it exists, check if it has JSON content
+                        "if grep -q '{' /etc/docker/daemon.json; then "
+                        # If it has JSON content but no cgroupfs setting, add it
+                        "if ! grep -q 'cgroupfs' /etc/docker/daemon.json; then "
+                        "sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak && "
+                        'sudo sed -i \'s/{/{"exec-opts": ["native.cgroupdriver=cgroupfs"], /\' /etc/docker/daemon.json; '
+                        "fi; "
+                        # If it doesn't exist or is empty, create it
+                        "else "
+                        'echo \'{"exec-opts": ["native.cgroupdriver=cgroupfs"]}\' | sudo tee /etc/docker/daemon.json; '
+                        "fi; "
+                        "else "
+                        "sudo mkdir -p /etc/docker && "
+                        'echo \'{"exec-opts": ["native.cgroupdriver=cgroupfs"]}\' | sudo tee /etc/docker/daemon.json; '
+                        "fi"
+                    ],
+                    interactive=True,
+                )
+
                 # Setup docker group
+                click.echo("🔧 Setting up Docker group...")
                 remote_cmd(
                     remote,
                     [
@@ -37,49 +126,27 @@ def check_docker_group(remote: RemoteConfig | None = None) -> None:
                     interactive=True,
                 )
 
-                # Configure NVIDIA runtime (only once)
+                click.echo("🔄 Restarting Docker daemon...")
+                remote_cmd(remote, ["sudo systemctl restart docker"], interactive=True)
+
+            if nvidia_needs_changes:
+                click.echo("🔧 Configuring NVIDIA GPU device symlinks...")
+                # Setup NVIDIA device symlinks
                 remote_cmd(
                     remote,
                     [
-                        # Check if NVIDIA is already configured
-                        "if ! grep -q 'no-cgroups = false' /etc/nvidia-container-runtime/config.toml; then "
-                        "sudo sh -c 'echo \"no-cgroups = false\" >> /etc/nvidia-container-runtime/config.toml' && "
-                        # Set cgroupfs as cgroup driver
-                        "if [ ! -f /etc/docker/daemon.json ]; then "
-                        'echo \'{"exec-opts": ["native.cgroupdriver=cgroupfs"]}\' | sudo tee /etc/docker/daemon.json; '
-                        "elif ! grep -q 'cgroupfs' /etc/docker/daemon.json; then "
-                        "sudo sed -i 's/systemd/cgroupfs/g' /etc/docker/daemon.json; "
-                        "fi && "
-                        # Reload everything
-                        "sudo systemctl daemon-reload && "
-                        "sudo systemctl restart nvidia-persistenced && "
-                        "sudo systemctl restart docker && "
-                        "sudo rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia || true && "
-                        "sudo modprobe nvidia && "
-                        "sudo modprobe nvidia_uvm; "
-                        "fi"
+                        "sudo apt-get update && "
+                        "sudo apt-get install -y nvidia-container-toolkit && "
+                        "sudo nvidia-ctk runtime configure --runtime=docker && "
+                        "sudo systemctl restart docker"
                     ],
                     interactive=True,
                 )
-                click.echo("✅ Docker and NVIDIA setup complete")
-            except Exception as e:
-                raise click.ClickException(f"Failed to setup docker group: {e}")
-    else:
-        # Local docker group check remains the same
-        username = pwd.getpwuid(os.getuid()).pw_name
-        try:
-            if "docker" not in [
-                g.gr_name for g in grp.getgrall() if username in g.gr_mem
-            ]:
-                subprocess.run(
-                    ["sudo", "usermod", "-aG", "docker", username],
-                    check=True,
-                    capture_output=True,
-                )
-                click.echo("Added user to docker group. Please logout and login again.")
-                sys.exit(0)
-        except subprocess.CalledProcessError as e:
-            raise click.ClickException(f"Failed to add user to docker group: {e}")
+
+            click.echo("✅ Docker and NVIDIA configuration complete")
+    except Exception as e:
+        click.echo(f"❌ Docker check failed: {e}")
+        raise
 
 
 def verify_env_vars(remote: Optional[RemoteConfig] = None) -> None:
@@ -143,6 +210,8 @@ def start_container(
     container_name: str,
     remote_config: Optional[RemoteConfig] = None,
     build=False,
+    host_ray_dashboard_port=None,
+    host_ray_client_port=None,
 ) -> None:
     def cmd_wrap(cmd):
         return (
@@ -157,25 +226,24 @@ def start_container(
             )
         )
 
-    service_name = project_name.lower()
+    # Update the .env file with custom port mappings if specified
+    if host_ray_dashboard_port or host_ray_client_port:
+        env_updates = {}
+        if host_ray_dashboard_port:
+            env_updates["HOST_RAY_DASHBOARD_PORT"] = host_ray_dashboard_port
+        if host_ray_client_port:
+            env_updates["HOST_RAY_CLIENT_PORT"] = host_ray_client_port
 
-    # # Start Ray head node using ray compose file
-    # ray_cmd = [
-    #     "docker",
-    #     "compose",
-    #     "-f",
-    #     "docker-compose-ray.yml",
-    #     "up",
-    #     "-d",
-    #     "--no-recreate",
-    #     "ray-head",
-    # ]
-    # cmd_wrap(ray_cmd, interactive=True)
+        from mltoolbox.utils.remote import update_env_file
+
+        update_env_file(remote_config, project_name, env_updates)
+
+    service_name = project_name.lower()
 
     # Start in detached mode
     base_cmd = ["sudo", "docker", "compose", "up", "-d"]
     if build:
         base_cmd.append("--build")
     base_cmd.append(service_name)
-    
+
     cmd_wrap(base_cmd)

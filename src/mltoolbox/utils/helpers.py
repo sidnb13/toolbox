@@ -59,14 +59,12 @@ def remote_cmd(
     actual_username = ssh_config.get("user", config.username)
     identity_file = ssh_config.get("identityfile", [None])[0]
 
-    click.echo(f"🔄 Executing remote command on {config.host}")
-    click.echo(f"Command: {command}")
+    click.echo(f"🔄 Executing remote command '{command}' on {config.host}")
 
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     try:
-        click.echo(f"Connecting to {actual_hostname}...")
         connect_kwargs = {
             "hostname": actual_hostname,
             "username": actual_username,
@@ -81,7 +79,6 @@ def remote_cmd(
             connect_kwargs["key_filename"] = identity_file
 
         ssh.connect(**connect_kwargs)
-        click.echo("✅ SSH connection established")
         _, stdout, _ = ssh.exec_command("pwd")
         remote_cwd = stdout.read().decode().strip()
 

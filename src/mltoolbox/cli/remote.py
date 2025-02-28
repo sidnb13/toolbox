@@ -1,7 +1,8 @@
 import os
 import re
-from pathlib import Path
 import subprocess
+from pathlib import Path
+
 import click
 from dotenv import load_dotenv
 from sqlalchemy.orm import joinedload
@@ -55,7 +56,17 @@ def provision():
     "-p",
     multiple=True,
     default=["8000:8000", "8265:8265"],
-    help="Port forwarding",
+    help="Port forwarding in local:remote format",
+)
+@click.option(
+    "--host-ray-dashboard-port",
+    default=None,
+    help="Host port to map to Ray dashboard (container port remains 8265)",
+)
+@click.option(
+    "--host-ray-client-port",
+    default=None,
+    help="Host port to map to Ray client server (container port remains 10001)",
 )
 @click.option(
     "--wait/--no-wait",
@@ -92,6 +103,8 @@ def connect(
     env_name,
     force_rebuild,
     forward_ports,
+    host_ray_dashboard_port,
+    host_ray_client_port,
     wait,
     timeout,
     exclude,
@@ -231,6 +244,8 @@ def connect(
             project_name,
             remote_config=remote_config,
             build=force_rebuild,
+            host_ray_dashboard_port=host_ray_dashboard_port,
+            host_ray_client_port=host_ray_client_port,
         )
     elif mode == "conda":
         click.echo("🔧 Setting up conda environment...")
