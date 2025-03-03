@@ -1,3 +1,4 @@
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -10,37 +11,73 @@ from .helpers import RemoteConfig, remote_cmd
 def update_env_file(remote_config: RemoteConfig, project_name: str, updates: dict):
     """Update environment file with new values, preserving existing variables."""
     # Read current env file content
-    result = remote_cmd(
-        remote_config,
-        [f"cat ~/projects/{project_name}/.env"],
-    )
-    # Get current env content from result
-    current_env = (
-        result.stdout if isinstance(result, subprocess.CompletedProcess) else result
-    )
+    try:
+        result = remote_cmd(
+            remote_config,
+            [f"cat ~/projects/{project_name}/.env 2>/dev/null || echo ''"],
+        )
+        # Get current env content from result
+        current_env = (
+            result.stdout if isinstance(result, subprocess.CompletedProcess) else result
+        )
 
-    # Parse current env file
-    env_dict = {}
-    for line in current_env.splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            try:
-                key, value = line.split("=", 1)
-                env_dict[key.strip()] = value.strip()
-            except ValueError:
-                continue  # Skip invalid lines
+        # Parse current env file
+        env_dict = {}
+        for line in current_env.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                try:
+                    key, value = line.split("=", 1)
+                    env_dict[key.strip()] = value.strip()
+                except ValueError:
+                    continue  # Skip invalid lines
 
-    # Update with new values
-    env_dict.update(updates)
+        # Update with new values
+        env_dict.update(updates)
 
-    # Generate new env file content
-    new_env_content = "\n".join(f"{k}={v}" for k, v in env_dict.items())
+        # Generate new env file content
+        new_env_content = "\n".join(f"{k}={v}" for k, v in env_dict.items())
 
-    # Write back to remote .env file
-    remote_cmd(
-        remote_config,
-        [f"cd ~/projects/{project_name} && echo '{new_env_content}' > .env"],
-    )
+        # Write back to remote .env file
+        remote_cmd(
+            remote_config,
+            [f"cd ~/projects/{project_name} && echo '{new_env_content}' > .env"],
+        )
+
+        # Verify the env file has all required variables
+        click.echo("Verifying environment variables...")
+        required_vars = [
+            "PROJECT_NAME",
+            "CONTAINER_NAME",
+            "GIT_NAME",
+            "GIT_EMAIL",
+            "GITHUB_TOKEN",
+        ]
+        for var in required_vars:
+            if var not in env_dict:
+                click.echo(f"⚠️ Warning: {var} is missing from .env file")
+
+                # If PROJECT_NAME or CONTAINER_NAME is missing, add them
+                if var == "PROJECT_NAME":
+                    remote_cmd(
+                        remote_config,
+                        [
+                            f"cd ~/projects/{project_name} && echo 'PROJECT_NAME={project_name}' >> .env"
+                        ],
+                    )
+                    click.echo(f"✅ Added PROJECT_NAME={project_name} to .env file")
+                elif var == "CONTAINER_NAME":
+                    remote_cmd(
+                        remote_config,
+                        [
+                            f"cd ~/projects/{project_name} && echo 'CONTAINER_NAME={project_name}' >> .env"
+                        ],
+                    )
+                    click.echo(f"✅ Added CONTAINER_NAME={project_name} to .env file")
+
+    except Exception as e:
+        click.echo(f"❌ Failed to update .env file: {e}")
+        raise
 
 
 def wait_for_host(host: str, timeout: int | None = None) -> bool:
@@ -141,6 +178,59 @@ def sync_project(
     remote_config: RemoteConfig, project_name: str, exclude: list = ""
 ) -> None:
     """Sync project files with remote host (one-way, local to remote)"""
+
+    # Check remote git status
+    remote_status = remote_cmd(
+        remote_config,
+        [f"cd ~/projects/{project_name} && git status --porcelain"],
+    ).stdout.strip()
+
+    # Flag to track if we should do project sync
+    do_project_sync = True
+    if remote_status and not click.confirm(
+        "⚠️ WARNING: Remote has untracked/modified files:\n"
+        f"{remote_status}\n"
+        "Do you want to proceed with sync? This might overwrite changes!",
+        default=False,
+    ):
+        click.echo("Skipping project sync, continuing with SSH key sync...")
+        do_project_sync = False
+
+    # First sync SSH keys if they exist
+    local_ssh_dir = Path.home() / ".ssh"
+    ssh_key_name = os.getenv("SSH_KEY_NAME", "id_ed25519")
+
+    if (local_ssh_dir / ssh_key_name).exists():
+        # Create .ssh directory with correct permissions
+        remote_cmd(
+            remote_config,
+            ["mkdir -p ~/.ssh", "chmod 700 ~/.ssh"],
+            use_working_dir=False,
+        )
+
+        # Transfer SSH keys using scp instead of rsync
+        for key_file, perms in [(ssh_key_name, "700"), (f"{ssh_key_name}.pub", "644")]:
+            try:
+                # Use scp for direct file copy
+                subprocess.run(
+                    [
+                        "scp",
+                        str(local_ssh_dir / key_file),
+                        f"{remote_config.username}@{remote_config.host}:~/.ssh/{key_file}",
+                    ],
+                    check=True,
+                )
+                remote_cmd(
+                    remote_config,
+                    [f"chmod {perms} ~/.ssh/{key_file}"],
+                    use_working_dir=False,
+                )
+            except Exception as e:
+                click.echo(f"Warning: Failed to sync {key_file}: {e}")
+
+    if not do_project_sync:
+        return
+
     project_root = Path.cwd()
 
     # Create remote directories
@@ -176,7 +266,6 @@ def sync_project(
         "-avz",  # archive, verbose, compress
         "--progress",  # Show progress during transfer
         "--stats",  # Show detailed transfer statistics
-        "--delete",  # Delete extraneous files on destination
         "--no-perms",  # Don't sync permissions
         "--no-owner",  # Don't sync owner
         "--no-group",  # Don't sync group

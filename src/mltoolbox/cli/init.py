@@ -22,12 +22,18 @@ from mltoolbox.utils.templates import generate_project_files
     type=click.Choice(["3.10", "3.11", "3.12"]),
     help="Python version to use",
 )
+@click.option(
+    "--ssh-key-name",
+    default="id_ed25519",
+    help="SSH key name to use (e.g., 'github', 'id_ed25519')",
+)
 def init(
     project_name: str,
     ray: bool,
     force: bool = False,
     inside_project: bool = False,
     python_version: str = "3.12",
+    ssh_key_name: str = "id_ed25519",
 ):
     """Initialize a new ML project."""
     load_dotenv(".env")
@@ -75,6 +81,7 @@ def init(
         "model_cache_dir": "./assets/models",
         "hf_home": "~/.cache/huggingface",
         "ray_excludes": "experiments/RAVEL/data/**/*.arrow,data/**/*.arrow,*.arrow",
+        "ssh_key_name": ssh_key_name,
     }
 
     # Generate project files

@@ -1,6 +1,5 @@
 import os
 import re
-import subprocess
 from pathlib import Path
 
 import click
@@ -34,7 +33,80 @@ def remote():
 
 @remote.command()
 def provision():
-    pass
+    raise click.ClickException("Not implemented yet")
+
+
+@remote.command()
+@click.argument("host_or_alias")
+@click.option("--username", default="ubuntu", help="Remote username")
+@click.option("--force-rebuild", is_flag=True, help="Force rebuild remote container")
+@click.option(
+    "--forward-ports",
+    "-p",
+    multiple=True,
+    default=["8000:8000", "8265:8265"],
+    help="Port forwarding in local:remote format",
+)
+def direct(
+    host_or_alias,
+    username,
+    force_rebuild,
+    forward_ports,
+):
+    """Connect directly to remote container with zero setup."""
+    # Validate host IP address format
+    ip_pattern = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
+    if not re.match(ip_pattern, host_or_alias):
+        remote = db.get_remote_fuzzy(host_or_alias)
+        host = remote.host
+        username = remote.username
+    else:
+        host = host_or_alias
+
+    project_name = Path.cwd().name
+
+    remote_config = RemoteConfig(
+        host=host,
+        username=username,
+        working_dir=f"~/projects/{project_name}",
+    )
+
+    # Just start the container
+    start_container(
+        project_name,
+        project_name,
+        remote_config=remote_config,
+        build=force_rebuild,
+    )
+
+    # Connect to container - use full path to docker compose
+    cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {project_name.lower()} zsh"
+
+    # Build SSH command with port forwarding
+    ssh_args = [
+        "ssh",
+        "-A",  # Forward SSH agent
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ExitOnForwardFailure=no",
+        "-o",
+        "ServerAliveInterval=60",
+        "-o",
+        "ServerAliveCountMax=3",
+    ]
+
+    # Add port forwarding arguments
+    for port_mapping in forward_ports:
+        if port_mapping:
+            local_port, remote_port = port_mapping.split(":")
+            ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
+
+    # Add remaining SSH arguments
+    ssh_args.extend(["-t", f"{username}@{host}", cmd])
+
+    # Execute SSH command
+    os.execvp("ssh", ssh_args)  # noqa: S606
 
 
 @remote.command()
