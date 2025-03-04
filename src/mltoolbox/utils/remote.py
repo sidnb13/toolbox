@@ -179,22 +179,30 @@ def sync_project(
 ) -> None:
     """Sync project files with remote host (one-way, local to remote)"""
 
-    # Check remote git status
-    remote_status = remote_cmd(
+    # Check if project directory exists and is a git repo
+    check_git = remote_cmd(
         remote_config,
-        [f"cd ~/projects/{project_name} && git status --porcelain"],
+        [
+            f"test -d ~/projects/{project_name}/.git && echo 'exists' || echo 'not_exists'"
+        ],
     ).stdout.strip()
 
-    # Flag to track if we should do project sync
+    # Only check git status if the repo exists
     do_project_sync = True
-    if remote_status and not click.confirm(
-        "⚠️ WARNING: Remote has untracked/modified files:\n"
-        f"{remote_status}\n"
-        "Do you want to proceed with sync? This might overwrite changes!",
-        default=False,
-    ):
-        click.echo("Skipping project sync, continuing with SSH key sync...")
-        do_project_sync = False
+    if check_git == "exists":
+        remote_status = remote_cmd(
+            remote_config,
+            [f"cd ~/projects/{project_name} && git status --porcelain"],
+        ).stdout.strip()
+
+        if remote_status and not click.confirm(
+            "⚠️ WARNING: Remote has untracked/modified files:\n"
+            f"{remote_status}\n"
+            "Do you want to proceed with sync? This might overwrite changes!",
+            default=False,
+        ):
+            click.echo("Skipping project sync, continuing with SSH key sync...")
+            do_project_sync = False
 
     # First sync SSH keys if they exist
     local_ssh_dir = Path.home() / ".ssh"

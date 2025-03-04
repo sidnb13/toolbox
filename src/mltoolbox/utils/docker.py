@@ -134,32 +134,14 @@ def check_docker_group(remote: RemoteConfig) -> None:
 
                     # Modified docker group setup with shell reload
                     click.echo("🔧 Setting up Docker group...")
+                    remote_cmd(remote, ["sudo -n groupadd -f docker"], interactive=True)
                     remote_cmd(
-                        remote,
-                        [
-                            "sudo groupadd -f docker",
-                            "sudo usermod -aG docker $USER",
-                            # Force new shell with new group membership
-                            "exec sg docker -c 'newgrp docker'",
-                        ],
-                        interactive=True,
+                        remote, ["sudo -n usermod -aG docker $USER"], interactive=True
                     )
 
                     click.echo("🔄 Restarting Docker daemon...")
                     remote_cmd(
                         remote, ["sudo systemctl restart docker"], interactive=True
-                    )
-                elif needs_group_reload:
-                    # Just reload the shell for docker group if that's all we need
-                    click.echo("🔄 Reloading shell for docker group access...")
-                    remote_cmd(
-                        remote,
-                        [
-                            # Add docker group and continue with next command
-                            "sg docker -c 'groups && exec \"$SHELL\"'"
-                            # The exec "$SHELL" keeps the shell alive with new groups
-                        ],
-                        interactive=True,
                     )
 
                 if nvidia_needs_changes:
@@ -177,6 +159,20 @@ def check_docker_group(remote: RemoteConfig) -> None:
                     )
 
                 click.echo("✅ Docker and NVIDIA configuration complete")
+
+            if needs_group_reload:
+                click.echo("🔧 Setting up Docker group and reloading shell session...")
+                remote_cmd(remote, ["sudo -n groupadd -f docker"], interactive=True)
+                remote_cmd(
+                    remote, ["sudo -n usermod -aG docker $USER"], interactive=True
+                )
+
+                # Force a shell reload to apply group changes
+                remote_cmd(
+                    remote,
+                    ["newgrp docker << EOF\nexit\nEOF"],
+                    interactive=True,
+                )
     except Exception as e:
         click.echo(f"❌ Docker check failed: {e}")
         raise
