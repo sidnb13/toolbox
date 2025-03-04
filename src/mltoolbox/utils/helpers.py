@@ -1,4 +1,3 @@
-import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -7,6 +6,8 @@ from typing import Optional
 
 import click
 import paramiko
+
+from mltoolbox.utils.session import session_manager
 
 
 @dataclass
@@ -61,24 +62,21 @@ def remote_cmd(
 
     click.echo(f"🔄 Executing remote command '{command}' on {config.host}")
 
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    connect_kwargs = {
+        "timeout": 10,
+        "look_for_keys": True,
+        "allow_agent": True,
+        "banner_timeout": 60,
+    }
+
+    if identity_file:
+        connect_kwargs["key_filename"] = identity_file
 
     try:
-        connect_kwargs = {
-            "hostname": actual_hostname,
-            "username": actual_username,
-            "timeout": 10,
-            "look_for_keys": True,
-            "allow_agent": True,
-            "banner_timeout": 60,
-        }
+        ssh = session_manager.get_session(
+            actual_hostname, actual_username, **connect_kwargs
+        )
 
-        # Use identity file from ssh config if specified
-        if identity_file:
-            connect_kwargs["key_filename"] = identity_file
-
-        ssh.connect(**connect_kwargs)
         _, stdout, _ = ssh.exec_command("pwd")
         remote_cwd = stdout.read().decode().strip()
 
@@ -159,5 +157,3 @@ def remote_cmd(
         raise
     except Exception as e:
         raise click.ClickException(f"Command failed: {e!s}")
-    finally:
-        ssh.close()
