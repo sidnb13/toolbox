@@ -254,6 +254,51 @@ def start_container(
                 check=False,
             )
 
+    def cmd_output(cmd):
+        if remote_config:
+            return remote_cmd(remote_config, cmd, interactive=False)
+        else:
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+    # Check container status to determine if we need to rebuild
+    service_name = project_name.lower()
+    container_status_cmd = [
+        "docker",
+        "ps",
+        "-a",
+        "--filter",
+        f"name={container_name}",
+        "--format",
+        "{{.Status}}",
+    ]
+    status_result = cmd_output(container_status_cmd)
+
+    # Auto-enable build if container doesn't exist, is unhealthy, or has exited
+    if not build:
+        if status_result.returncode != 0 or not status_result.stdout.strip():
+            click.echo(
+                f"🔄 Container {container_name} not found. Will build from scratch."
+            )
+            build = True
+        elif (
+            "Exited" in status_result.stdout
+            or "unhealthy" in status_result.stdout.lower()
+        ):
+            click.echo(
+                f"🔄 Container {container_name} is in unhealthy state. Rebuilding..."
+            )
+            build = True
+        elif "Restarting" in status_result.stdout:
+            click.echo(
+                f"🔄 Container {container_name} is in a restart loop. Rebuilding..."
+            )
+            build = True
+
     # Update the .env file with custom port mappings if specified
     if host_ray_dashboard_port or host_ray_client_port:
         env_updates = {}
