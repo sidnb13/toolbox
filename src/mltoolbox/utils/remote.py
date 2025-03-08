@@ -8,6 +8,17 @@ import click
 from .helpers import RemoteConfig, remote_cmd
 
 
+def setup_zshrc(remote_config: RemoteConfig):
+    """Create a basic .zshrc file if it doesn't exist."""
+    remote_cmd(
+        remote_config,
+        [
+            "test -f ~/.zshrc || echo \"# Basic zsh configuration\nbindkey -e\nsetopt PROMPT_SUBST\nPS1='%n@%m:%~%# '\" > ~/.zshrc"
+        ],
+        use_working_dir=False,
+    )
+
+
 def update_env_file(remote_config: RemoteConfig, project_name: str, updates: dict):
     """Update environment file with new values, preserving existing variables."""
     # Read current env file content
