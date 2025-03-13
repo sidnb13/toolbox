@@ -18,6 +18,7 @@ RUN apt-get update && \
     curl \
     git \
     openssh-client \
+    rclone \
     sudo \
     wget \
     nvtop \

@@ -19,6 +19,7 @@ services:
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
       - ./.vscode-server:/.vscode-server
       - ${HOME}/.ssh:/root/.ssh
+      - ${HOME}/.config/rclone:/root/.config/rclone
       - /dev/nvidia-uvm:/dev/nvidia-uvm
       - /dev/nvidia-uvm-tools:/dev/nvidia-uvm-tools
       - /dev/nvidia-modeset:/dev/nvidia-modeset

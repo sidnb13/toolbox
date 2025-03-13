@@ -17,6 +17,7 @@ from mltoolbox.utils.helpers import remote_cmd
 from mltoolbox.utils.remote import (
     fetch_remote,
     setup_conda_env,
+    setup_rclone,
     setup_zshrc,
     sync_project,
     update_env_file,
@@ -277,6 +278,7 @@ def connect(
     click.echo(f"Access your instance with `ssh {remote.alias}`")
 
     setup_zshrc(remote_config)
+    setup_rclone(remote_config)
 
     click.echo("📁 Creating remote project directories...")
     remote_cmd(

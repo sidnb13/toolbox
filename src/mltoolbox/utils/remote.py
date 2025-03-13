@@ -19,6 +19,38 @@ def setup_zshrc(remote_config: RemoteConfig):
     )
 
 
+def setup_rclone(remote_config: RemoteConfig) -> None:
+    """Setup rclone configuration on remote host."""
+    local_rclone_config = Path.home() / ".config/rclone/rclone.conf"
+
+    if not local_rclone_config.exists():
+        click.echo("⚠️ No local rclone config found at ~/.config/rclone/rclone.conf")
+        return
+
+    click.echo("📦 Setting up rclone configuration...")
+
+    # Create remote rclone config directory
+    remote_cmd(
+        remote_config,
+        ["mkdir -p ~/.config/rclone"],
+        use_working_dir=False,
+    )
+
+    # Use scp to copy rclone config
+    try:
+        subprocess.run(
+            [
+                "scp",
+                str(local_rclone_config),
+                f"{remote_config.username}@{remote_config.host}:~/.config/rclone/rclone.conf",
+            ],
+            check=True,
+        )
+        click.echo("✅ Rclone config synced successfully")
+    except subprocess.CalledProcessError as e:
+        click.echo(f"❌ Failed to sync rclone config: {e}")
+
+
 def update_env_file(remote_config: RemoteConfig, project_name: str, updates: dict):
     """Update environment file with new values, preserving existing variables."""
     # Read current env file content
