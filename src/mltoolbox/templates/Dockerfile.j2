@@ -14,9 +14,17 @@ RUN git config --global user.email "${GIT_EMAIL}" && \
     git config --global user.name "${GIT_NAME}"
 
 # Install requirements
-COPY requirements.txt /tmp/
+COPY requirements.txt requirements-ray.txt /tmp/
 RUN uv pip install --system --no-cache-dir --no-upgrade -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt || true
+    uv pip install --system --no-cache-dir --no-upgrade -r /tmp/requirements-ray.txt && \
+    rm /tmp/requirements.txt /tmp/requirements-ray.txt || true
+
+ENV PYTHONPATH=/opt/ray:${PYTHONPATH}
+ENV PATH=/opt/ray/bin:${PATH}
+RUN mkdir -p /opt/ray && \
+    uv pip install --system --target=/opt/ray "ray[default,serve]" opencensus-ext-prometheus prometheus_client setuptools && \
+    uv pip install --system --target=/opt/ray -r /tmp/requirements-ray.txt && \
+    ln -s /opt/ray/bin/ray /usr/local/bin/ray
 
 # If python package exists, install it
 RUN python setup.py develop || true \

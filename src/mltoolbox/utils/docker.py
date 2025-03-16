@@ -1,10 +1,7 @@
 from __future__ import annotations  # noqa: INP001
 
-import grp
 import os
-import pwd
 import subprocess
-import sys
 from pathlib import Path
 from typing import Optional
 
@@ -19,8 +16,14 @@ def check_docker_group(remote: RemoteConfig) -> None:
         # First check if we need to add user to docker group
         result = remote_cmd(remote, ["groups"], interactive=True)
         needs_group_reload = "docker" not in result.stdout
-        # Check if docker is running by listing containers
-        remote_cmd(remote, ["sudo docker ps -q"], interactive=True)
+
+        # Try using docker directly first - this might work if group is already active
+        try:
+            remote_cmd(remote, ["docker ps -q"], interactive=True)
+            needs_sudo = False
+        except Exception:  # If direct docker access fails, fall back to sudo
+            needs_sudo = True
+            remote_cmd(remote, ["sudo docker ps -q"], interactive=True)
 
         # Check if docker daemon.json has cgroupfs configured
         result = remote_cmd(
@@ -77,97 +80,101 @@ def check_docker_group(remote: RemoteConfig) -> None:
                     "⚠️ These changes may restart Docker and disrupt running containers"
                 )
 
-            # If any changes are needed, warn the user
-            if docker_needs_changes or nvidia_needs_changes:
-                if running_containers:
-                    click.echo(
-                        f"⚠️ Found {len(running_containers)} running containers on the remote machine"
-                    )
-                    click.echo(
-                        "⚠️ These changes may restart Docker and disrupt running containers"
-                    )
+            # Only prompt if there are running containers
+            if running_containers:
+                choice = click.prompt(
+                    "Choose an option",
+                    type=click.Choice(["continue", "skip", "abort"]),
+                    default="skip",
+                )
 
-                    # Only prompt if there are running containers
-                    choice = click.prompt(
-                        "Choose an option",
-                        type=click.Choice(["continue", "skip", "abort"]),
-                        default="skip",
-                    )
+                if choice == "abort":
+                    raise click.Abort()
+                elif choice == "skip":
+                    click.echo("⏭️ Skipping Docker configuration")
+                    return
+            else:
+                # No running containers, proceed without prompting
+                click.echo(
+                    "No running containers found. Proceeding with Docker configuration..."
+                )
+                choice = "continue"
 
-                    if choice == "abort":
-                        raise click.Abort()
-                    elif choice == "skip":
-                        click.echo("⏭️ Skipping Docker configuration")
-                        return
-                else:
-                    # No running containers, proceed without prompting
-                    click.echo(
-                        "No running containers found. Proceeding with Docker configuration..."
-                    )
-                    choice = "continue"
+            if docker_needs_changes:
+                click.echo("🔧 Updating Docker cgroup driver configuration...")
+                remote_cmd(
+                    remote,
+                    [
+                        "sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak 2>/dev/null || true && "
+                        "sudo mkdir -p /etc/docker && "
+                        'echo \'{"exec-opts": ["native.cgroupdriver=cgroupfs"]}\' | sudo tee /etc/docker/daemon.json'
+                    ],
+                    interactive=True,
+                )
 
-                if docker_needs_changes:
-                    click.echo("🔧 Updating Docker cgroup driver configuration...")
-                    remote_cmd(
-                        remote,
-                        [
-                            # Check if docker daemon.json exists
-                            "if [ -f /etc/docker/daemon.json ]; then "
-                            # If it exists, check if it has JSON content
-                            "if grep -q '{' /etc/docker/daemon.json; then "
-                            # If it has JSON content but no cgroupfs setting, add it
-                            "if ! grep -q 'cgroupfs' /etc/docker/daemon.json; then "
-                            "sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak && "
-                            'sudo sed -i \'s/{/{"exec-opts": ["native.cgroupdriver=cgroupfs"], /\' /etc/docker/daemon.json; '
-                            "fi; "
-                            # If it doesn't exist or is empty, create it
-                            "else "
-                            'echo \'{"exec-opts": ["native.cgroupdriver=cgroupfs"]}\' | sudo tee /etc/docker/daemon.json; '
-                            "fi; "
-                            "else "
-                            "sudo mkdir -p /etc/docker && "
-                            'echo \'{"exec-opts": ["native.cgroupdriver=cgroupfs"]}\' | sudo tee /etc/docker/daemon.json; '
-                            "fi"
-                        ],
-                        interactive=True,
-                    )
+                # Stop Docker service
+                click.echo("🛑 Stopping Docker service...")
+                remote_cmd(remote, ["sudo systemctl stop docker"], interactive=True)
 
-                    # Modified docker group setup with shell reload
-                    click.echo("🔧 Setting up Docker group...")
-                    remote_cmd(remote, ["sudo -n groupadd -f docker"], interactive=True)
-                    remote_cmd(
-                        remote, ["sudo -n usermod -aG docker $USER"], interactive=True
-                    )
+                # Wait for service to fully stop
+                remote_cmd(remote, ["sleep 2"], interactive=True)
 
-                    click.echo("🔄 Restarting Docker daemon...")
-                    remote_cmd(
-                        remote, ["sudo systemctl restart docker"], interactive=True
-                    )
+                # Start Docker service
+                click.echo("🚀 Starting Docker service...")
+                remote_cmd(remote, ["sudo systemctl start docker"], interactive=True)
 
-                if nvidia_needs_changes:
-                    click.echo("🔧 Configuring NVIDIA GPU device symlinks...")
-                    # Setup NVIDIA device symlinks
-                    remote_cmd(
-                        remote,
-                        [
-                            "sudo apt-get update && "
-                            "sudo apt-get install -y nvidia-container-toolkit && "
-                            "sudo nvidia-ctk runtime configure --runtime=docker && "
-                            "sudo systemctl restart docker"
-                        ],
-                        interactive=True,
-                    )
+                # Wait for service to be ready
+                remote_cmd(remote, ["sleep 2"], interactive=True)
 
-                click.echo("✅ Docker and NVIDIA configuration complete")
+                # Verify Docker is running
+                click.echo("🔍 Verifying Docker service status...")
+                result = remote_cmd(
+                    remote,
+                    ["sudo systemctl --no-pager status docker"],
+                    interactive=True,
+                )
+                if "active (running)" not in result.stdout:
+                    raise click.ClickException("Failed to start Docker service")
 
-            if needs_group_reload:
-                click.echo("🔧 Setting up Docker group and reloading group membership...")
-                remote_cmd(remote, ["sudo -n groupadd -f docker"], interactive=True)
-                remote_cmd(remote, ["sudo -n usermod -aG docker $USER"], interactive=True)
-                
-                # Force group reload in current session
-                remote_cmd(remote, ["exec sudo -u $USER sg docker -c 'groups'"], interactive=True)
-                click.echo("✅ Docker group membership reloaded")
+            if nvidia_needs_changes:
+                click.echo("🔧 Configuring NVIDIA GPU device symlinks...")
+                remote_cmd(
+                    remote,
+                    [
+                        "sudo apt-get update && "
+                        "sudo apt-get install -y nvidia-container-toolkit && "
+                        "sudo nvidia-ctk runtime configure --runtime=docker"
+                    ],
+                    interactive=True,
+                )
+
+                # Restart Docker service after NVIDIA changes
+                click.echo("🔄 Restarting Docker service for NVIDIA changes...")
+                remote_cmd(remote, ["sudo systemctl restart docker"], interactive=True)
+                remote_cmd(remote, ["sleep 2"], interactive=True)
+
+            click.echo("✅ Docker and NVIDIA configuration complete")
+
+        if needs_group_reload:
+            click.echo("🔧 Setting up Docker group and reloading group membership...")
+            remote_cmd(remote, ["sudo groupadd -f docker"], interactive=True)
+            remote_cmd(remote, ["sudo usermod -aG docker $USER"], interactive=True)
+
+            # Reload group membership using newgrp
+            click.echo("🔄 Reloading group membership...")
+            remote_cmd(
+                remote,
+                [
+                    "bash -c '"
+                    "newgrp docker && "  # Start new session with docker group
+                    "groups && "  # Verify groups are loaded
+                    "docker ps -q"  # Test docker access
+                    "'"
+                ],
+                interactive=True,
+            )
+            click.echo("✅ Docker group membership reloaded")
+
     except Exception as e:
         click.echo(f"❌ Docker check failed: {e}")
         raise
@@ -262,6 +269,8 @@ def start_container(
 
     # Check container status to determine if we need to rebuild
     service_name = project_name.lower()
+    container_name = container_name.lower()
+
     container_status_cmd = [
         "docker",
         "ps",
