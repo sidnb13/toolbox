@@ -164,13 +164,7 @@ def check_docker_group(remote: RemoteConfig) -> None:
             click.echo("🔄 Reloading group membership...")
             remote_cmd(
                 remote,
-                [
-                    "bash -c '"
-                    "newgrp docker && "  # Start new session with docker group
-                    "groups && "  # Verify groups are loaded
-                    "docker ps -q"  # Test docker access
-                    "'"
-                ],
+                ["sg docker -c 'groups && docker ps -q || echo docker-test-failed'"],
                 interactive=True,
             )
             click.echo("✅ Docker group membership reloaded")
@@ -180,27 +174,56 @@ def check_docker_group(remote: RemoteConfig) -> None:
         raise
 
 
-def verify_env_vars(remote: Optional[RemoteConfig] = None) -> None:
+def verify_env_vars(remote: Optional[RemoteConfig] = None) -> dict:
+    """Verify required environment variables and return all env vars as dict."""
     required_vars = ["GIT_NAME", "GITHUB_TOKEN", "GIT_EMAIL"]
+    env_vars = {}
 
     if remote:
-        cmd = [
-            f'test -f .env && source .env && [ ! -z "${var}" ]' for var in required_vars
-        ]
-        try:
-            remote_cmd(remote, [" && ".join(cmd)])
-        except subprocess.CalledProcessError:
+        # First get all env vars
+        result = remote_cmd(
+            remote, ["test -f .env && cat .env || echo ''"], interactive=False
+        )
+
+        # Parse env vars from the output
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                env_vars[key] = value.strip("'\"")
+
+        # Check if required vars exist
+        missing_vars = [var for var in required_vars if var not in env_vars]
+        if missing_vars:
             raise click.ClickException(
-                f"Required environment variables not set on remote: {', '.join(required_vars)}",
+                f"Required environment variables not set on remote: {', '.join(missing_vars)}",
             )
     else:
+        # Local environment check
         if not Path.cwd().joinpath(".env").exists():
             raise click.ClickException("❌ .env file not found")
-        missing_vars = [var for var in required_vars if not os.getenv(var)]
+
+        # Load env vars from the .env file
+        with open(Path.cwd().joinpath(".env"), "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    env_vars[key] = value.strip("'\"")
+
+        # Check also in current environment for required vars
+        for var in required_vars:
+            if var not in env_vars and os.getenv(var):
+                env_vars[var] = os.getenv(var)
+
+        # Check if required vars exist
+        missing_vars = [var for var in required_vars if var not in env_vars]
         if missing_vars:
             raise click.ClickException(
                 f"Required environment variables not set: {', '.join(missing_vars)}",
             )
+
+    return env_vars
 
 
 def get_image_digest(
@@ -268,7 +291,6 @@ def start_container(
             )
 
     # Check container status to determine if we need to rebuild
-    service_name = project_name.lower()
     container_name = container_name.lower()
 
     container_status_cmd = [
@@ -313,14 +335,14 @@ def start_container(
 
         from mltoolbox.utils.remote import update_env_file
 
-        update_env_file(remote_config, project_name, env_updates)
-
-    service_name = project_name.lower()
+        update_env_file(
+            remote_config, project_name, env_updates, container_name=container_name
+        )
 
     # Start in detached mode
     base_cmd = ["docker", "compose", "up", "-d"]
     if build:
         base_cmd.append("--build")
-    base_cmd.append(service_name)
+    base_cmd.append(container_name)
 
     cmd_wrap(base_cmd)

@@ -169,6 +169,11 @@ def direct(
     default=None,
     help="Python version to use (e.g., '3.10', '3.11')",
 )
+@click.option(
+    "--worktree",
+    default=None,
+    help="Use a custom worktree name instead of the directory name",
+)
 def connect(
     host_or_alias,
     alias,
@@ -184,6 +189,7 @@ def connect(
     exclude,
     variant,
     python_version,
+    worktree,
 ):
     """Connect to remote development environment."""
     # Validate host IP address format
@@ -194,12 +200,18 @@ def connect(
     else:
         host = host_or_alias
 
-    verify_env_vars()
+    env_vars = verify_env_vars()
+    project_name = env_vars.get("PROJECT_NAME", Path.cwd().name)
+    container_name = env_vars.get("CONTAINER_NAME", project_name.lower())
 
-    project_name = Path.cwd().name
+    # Use the provided worktree name or fall back to project_name
+    worktree_name = worktree or project_name
 
-    # Determine container name based on mode
-    container_name = project_name if mode == "container" else None
+    # Log the worktree usage if different from project name
+    if worktree and worktree != project_name:
+        click.echo(
+            f"🌲 Using worktree name '{worktree_name}' instead of '{project_name}'"
+        )
 
     # Get or create/update remote and project
     remote = db.upsert_remote(
@@ -221,9 +233,8 @@ def connect(
     remote_config = RemoteConfig(
         host=remote.host,
         username=remote.username,
-        working_dir=f"~/projects/{project_name}",
+        working_dir=f"~/projects/{worktree_name}",
     )
-    project_name = Path.cwd().name
 
     # create custom ssh config if not exists
     ssh_config_path = Path("~/.config/mltoolbox/ssh/config").expanduser()
@@ -280,10 +291,10 @@ def connect(
     setup_zshrc(remote_config)
     setup_rclone(remote_config)
 
-    click.echo("📁 Creating remote project directories...")
+    click.echo(f"📁 Creating remote project directories for {worktree_name}")
     remote_cmd(
         remote_config,
-        [f"mkdir -p ~/projects/{project_name}"],
+        [f"mkdir -p ~/projects/{worktree_name}"],
         use_working_dir=False,
     )
 
@@ -294,11 +305,13 @@ def connect(
         # First ensure remote directory exists
         remote_cmd(
             remote_config,
-            [f"mkdir -p ~/projects/{project_name}"],
+            [f"mkdir -p ~/projects/{worktree_name}"],
             use_working_dir=False,
         )
 
-        sync_project(remote_config, project_name, exclude=exclude)
+        sync_project(
+            remote_config, project_name, remote_path=worktree_name, exclude=exclude
+        )
 
         # Set up environment first
         env_updates = {
@@ -313,12 +326,12 @@ def connect(
             click.echo(f"🐍 Setting Python version to {python_version}")
 
         click.echo(f"🔧 Updating environment configuration for {variant}...")
-        update_env_file(remote_config, project_name, env_updates)
+        update_env_file(remote_config, worktree_name, env_updates)
 
         click.echo("🚀 Starting remote container...")
         start_container(
-            project_name,
-            project_name,
+            worktree_name,
+            container_name,
             remote_config=remote_config,
             build=force_rebuild,
             host_ray_dashboard_port=host_ray_dashboard_port,
@@ -329,11 +342,11 @@ def connect(
         setup_conda_env(remote_config, env_name)
 
     if mode == "container":
-        cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {project_name.lower()} zsh"
+        cmd = f"cd ~/projects/{worktree_name} && docker compose exec -it -w /workspace/{worktree_name} {project_name.lower()} zsh"
     elif mode == "ssh":
-        cmd = f"cd ~/projects/{project_name} && zsh"
+        cmd = f"cd ~/projects/{worktree_name} && zsh"
     elif mode == "conda":
-        cmd = f"cd ~/projects/{project_name} && export PATH=$HOME/miniconda3/bin:$PATH && source $HOME/miniconda3/etc/profile.d/conda.sh && conda activate {env_name} && zsh"
+        cmd = f"cd ~/projects/{worktree_name} && export PATH=$HOME/miniconda3/bin:$PATH && source $HOME/miniconda3/etc/profile.d/conda.sh && conda activate {env_name} && zsh"
 
     # Execute the SSH command with port forwarding for all modes
     # Build SSH command with port forwarding

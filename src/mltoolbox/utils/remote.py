@@ -51,8 +51,23 @@ def setup_rclone(remote_config: RemoteConfig) -> None:
         click.echo(f"❌ Failed to sync rclone config: {e}")
 
 
-def update_env_file(remote_config: RemoteConfig, project_name: str, updates: dict):
-    """Update environment file with new values, preserving existing variables."""
+def update_env_file(
+    remote_config: RemoteConfig,
+    project_name: str,
+    updates: dict,
+    container_name: str = None,
+):
+    """Update environment file with new values, preserving existing variables.
+
+    Args:
+        remote_config: Remote configuration
+        project_name: Project name for the remote directory path
+        updates: Dictionary of environment variables to update
+        container_name: Optional container name, defaults to project_name if not provided
+    """
+    # Use container_name if provided, otherwise default to project_name
+    container_name = container_name or project_name
+
     # Read current env file content
     try:
         result = remote_cmd(
@@ -113,10 +128,10 @@ def update_env_file(remote_config: RemoteConfig, project_name: str, updates: dic
                     remote_cmd(
                         remote_config,
                         [
-                            f"cd ~/projects/{project_name} && echo 'CONTAINER_NAME={project_name}' >> .env"
+                            f"cd ~/projects/{project_name} && echo 'CONTAINER_NAME={container_name}' >> .env"
                         ],
                     )
-                    click.echo(f"✅ Added CONTAINER_NAME={project_name} to .env file")
+                    click.echo(f"✅ Added CONTAINER_NAME={container_name} to .env file")
 
     except Exception as e:
         click.echo(f"❌ Failed to update .env file: {e}")
@@ -218,15 +233,17 @@ def setup_conda_env(
 
 
 def sync_project(
-    remote_config: RemoteConfig, project_name: str, exclude: list = ""
+    remote_config: RemoteConfig, project_name: str, remote_path=None, exclude: list = ""
 ) -> None:
     """Sync project files with remote host (one-way, local to remote)"""
+
+    remote_path = remote_path or project_name
 
     # Check if project directory exists and is a git repo
     check_git = remote_cmd(
         remote_config,
         [
-            f"test -d ~/projects/{project_name}/.git && echo 'exists' || echo 'not_exists'"
+            f"test -d ~/projects/{remote_path}/.git && echo 'exists' || echo 'not_exists'"
         ],
     ).stdout.strip()
 
@@ -235,7 +252,7 @@ def sync_project(
     if check_git == "exists":
         remote_status = remote_cmd(
             remote_config,
-            [f"cd ~/projects/{project_name} && git status --porcelain"],
+            [f"cd ~/projects/{remote_path} && git status --porcelain"],
         ).stdout.strip()
 
         if remote_status and not click.confirm(
@@ -287,7 +304,7 @@ def sync_project(
     # Create remote directories
     remote_cmd(
         remote_config,
-        [f"mkdir -p ~/.config/{project_name} ~/projects/{project_name}"],
+        [f"mkdir -p ~/.config/{remote_path} ~/projects/{project_name}"],
         use_working_dir=False,
     )
 
