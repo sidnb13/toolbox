@@ -15,7 +15,9 @@ from mltoolbox.utils.docker import (
 )
 from mltoolbox.utils.helpers import remote_cmd
 from mltoolbox.utils.remote import (
+    build_rclone_cmd,
     fetch_remote,
+    run_rclone_sync,
     setup_conda_env,
     setup_rclone,
     setup_zshrc,
@@ -49,11 +51,17 @@ def provision():
     default=["8000:8000", "8265:8265"],
     help="Port forwarding in local:remote format",
 )
+@click.option(
+    "--worktree",
+    default=None,
+    help="Use a custom worktree name instead of the directory name",
+)
 def direct(
     host_or_alias,
     username,
     force_rebuild,
     forward_ports,
+    worktree,
 ):
     """Connect directly to remote container with zero setup."""
     # Validate host IP address format
@@ -65,24 +73,50 @@ def direct(
     else:
         host = host_or_alias
 
-    project_name = Path.cwd().name
+    # Get env variables for project and container names
+    try:
+        env_vars = verify_env_vars()
+        project_name = env_vars.get("PROJECT_NAME", Path.cwd().name)
+        container_name = env_vars.get("CONTAINER_NAME", project_name.lower())
+    except Exception:
+        # Fallback if env file doesn't exist
+        project_name = Path.cwd().name
+        container_name = project_name.lower()
+
+    # Use the provided worktree name or fall back to project_name
+    worktree_name = worktree or project_name
+
+    # Log the worktree usage if different from project name
+    if worktree and worktree != project_name:
+        click.echo(
+            f"🌲 Using worktree name '{worktree_name}' instead of '{project_name}'"
+        )
 
     remote_config = RemoteConfig(
         host=host,
         username=username,
-        working_dir=f"~/projects/{project_name}",
+        working_dir=f"~/projects/{worktree_name}",
     )
+
+    # Update .env file to include WORKTREE_NAME if needed
+    if worktree and worktree != project_name:
+        click.echo(f"🔧 Adding worktree information to environment...")
+        env_updates = {
+            "WORKTREE_NAME": worktree_name,
+        }
+        update_env_file(remote_config, worktree_name, env_updates, container_name)
 
     # Just start the container
     start_container(
-        project_name,
-        project_name,
+        worktree_name,
+        container_name,
         remote_config=remote_config,
         build=force_rebuild,
     )
 
     # Connect to container - use full path to docker compose
-    cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {project_name.lower()} zsh"
+    # Use worktree_name for directory but container_name for the actual container
+    cmd = f"cd ~/projects/{worktree_name} && docker compose exec -it -w /workspace/{worktree_name} {container_name} zsh"
 
     # Build SSH command with port forwarding
     ssh_args = [
@@ -297,7 +331,6 @@ def connect(
         [f"mkdir -p ~/projects/{worktree_name}"],
         use_working_dir=False,
     )
-
     if mode == "container":
         check_docker_group(remote_config)
         click.echo("✅ Docker group checked")
@@ -309,6 +342,73 @@ def connect(
             use_working_dir=False,
         )
 
+        # Handle worktree case - sync both parent repo and worktree
+        if worktree and worktree != project_name:
+            try:
+                # Read the .git file to find the parent repository path
+                with open(".git", "r") as f:
+                    git_content = f.read().strip()
+                    if git_content.startswith("gitdir:"):
+                        parent_gitdir = git_content.split("gitdir:")[1].strip()
+
+                        # Extract parent repo path
+                        if "/worktrees/" in parent_gitdir:
+                            main_repo_path = parent_gitdir.split("/worktrees/")[0]
+                            main_repo_dir = Path(main_repo_path).parent
+                            main_repo_name = main_repo_dir.name
+
+                            click.echo(
+                                f"🔍 Detected Git worktree structure. Parent repo: {main_repo_name}"
+                            )
+
+                            # Sync parent repo first
+                            click.echo(
+                                f"🔄 Syncing parent repository {main_repo_name}..."
+                            )
+
+                            # Get original working directory
+                            original_dir = os.getcwd()
+
+                            try:
+                                # Change to parent repo directory
+                                os.chdir(str(main_repo_dir))
+
+                                # Now sync the parent repo from its own directory
+                                parent_remote_config = RemoteConfig(
+                                    host=remote.host,
+                                    username=remote.username,
+                                    working_dir=f"~/projects/{main_repo_name}",
+                                )
+
+                                sync_project(
+                                    parent_remote_config,
+                                    main_repo_name,
+                                    remote_path=main_repo_name,
+                                    exclude=exclude,
+                                )
+
+                                # Now fix the worktree .git file on remote to point to the correct location
+                                remote_cmd(
+                                    remote_config,
+                                    [
+                                        f"cd ~/projects/{worktree_name} && "
+                                        f'echo "gitdir: ../{{main_repo_name}}/.git/worktrees/{worktree_name}" > .git'
+                                    ],
+                                    use_working_dir=False,
+                                )
+                                click.echo(
+                                    f"✅ Fixed worktree Git reference to point to parent repo"
+                                )
+
+                            finally:
+                                # Change back to original directory
+                                os.chdir(original_dir)
+
+            except Exception as e:
+                click.echo(f"⚠️ Failed to sync parent repository: {e}")
+                click.echo("⚠️ Continuing with normal worktree sync...")
+
+        # Now sync the worktree/project
         sync_project(
             remote_config, project_name, remote_path=worktree_name, exclude=exclude
         )
@@ -319,6 +419,10 @@ def connect(
             "NVIDIA_DRIVER_CAPABILITIES": "all",
             "NVIDIA_VISIBLE_DEVICES": "all",
         }
+
+        if worktree and worktree != project_name:
+            env_updates["WORKTREE_NAME"] = worktree_name
+            click.echo(f"🌲 Adding worktree name to environment")
 
         # Add Python version to environment if specified
         if python_version:
@@ -342,7 +446,7 @@ def connect(
         setup_conda_env(remote_config, env_name)
 
     if mode == "container":
-        cmd = f"cd ~/projects/{worktree_name} && docker compose exec -it -w /workspace/{worktree_name} {project_name.lower()} zsh"
+        cmd = f"cd ~/projects/{worktree_name} && docker compose exec -it -w /workspace/{worktree_name} {container_name} zsh"
     elif mode == "ssh":
         cmd = f"cd ~/projects/{worktree_name} && zsh"
     elif mode == "conda":
@@ -418,14 +522,133 @@ def remove(host_or_alias: str):
     default="",
     help="Comma-separated patterns to exclude (e.g., 'checkpoints,wandb')",
 )
-def sync(host_or_alias, exclude):
+@click.option(
+    "--fix-worktree",
+    is_flag=True,
+    help="Fix worktree Git reference on remote",
+)
+def sync(host_or_alias, exclude, fix_worktree):
     """Sync project files with remote host."""
     project_name = Path.cwd().name
-    # Get remote config
     remote = db.get_remote_fuzzy(host_or_alias)
     remote_config = RemoteConfig(host=remote.host, username=remote.username)
+
+    # Check if we're in a worktree
+    is_worktree = False
+    main_repo_name = None
+    main_repo_dir = None
+
+    try:
+        # Check if .git is a file (indicating a worktree) rather than a directory
+        if Path(".git").is_file():
+            with open(".git", "r") as f:
+                git_content = f.read().strip()
+                if git_content.startswith("gitdir:"):
+                    is_worktree = True
+                    parent_gitdir = git_content.split("gitdir:")[1].strip()
+
+                    # Extract parent repo path
+                    if "/worktrees/" in parent_gitdir:
+                        main_repo_path = parent_gitdir.split("/worktrees/")[0]
+                        main_repo_dir = Path(main_repo_path).parent
+                        main_repo_name = main_repo_dir.name
+
+                        click.echo(
+                            f"🔍 Detected Git worktree. Parent repo: {main_repo_name}"
+                        )
+    except Exception as e:
+        click.echo(f"⚠️ Could not detect Git worktree structure: {e}")
+
+    # If we're in a worktree, sync the parent repo first
+    if is_worktree and main_repo_dir:
+        click.echo(f"🔄 Syncing parent repository {main_repo_name}...")
+        original_dir = os.getcwd()
+        worktree_name = project_name
+
+        try:
+            # Change to parent repo directory
+            os.chdir(str(main_repo_dir))
+
+            # Create parent repo remote config
+            parent_remote_config = RemoteConfig(
+                host=remote.host,
+                username=remote.username,
+                working_dir=f"~/projects/{main_repo_name}",
+            )
+
+            # Sync parent repo
+            sync_project(
+                parent_remote_config,
+                main_repo_name,
+                remote_path=main_repo_name,
+                exclude=exclude,
+            )
+            click.echo(f"✅ Parent repository {main_repo_name} synced")
+
+            # Change back to original directory
+            os.chdir(original_dir)
+
+            # Sync worktree
+            click.echo(f"🔄 Syncing worktree {worktree_name}...")
+            sync_project(
+                remote_config,
+                worktree_name,
+                remote_path=worktree_name,
+                exclude=exclude,
+            )
+
+            # Fix worktree Git reference if requested
+            if fix_worktree:
+                click.echo("🔧 Fixing Git worktree reference...")
+                remote_cmd(
+                    remote_config,
+                    [
+                        f"cd ~/projects/{worktree_name} && "
+                        f'echo "gitdir: ../{main_repo_name}/.git/worktrees/{worktree_name}" > .git'
+                    ],
+                    use_working_dir=False,
+                )
+                click.echo("✅ Fixed worktree Git reference")
+
+            click.echo(f"✅ Worktree {worktree_name} synced")
+            click.echo(
+                f"🎉 Successfully synced parent repo and worktree with {host_or_alias}"
+            )
+            return
+
+        except Exception as e:
+            click.echo(f"⚠️ Error syncing parent repo: {e}")
+            click.echo("⚠️ Continuing with normal sync...")
+            os.chdir(original_dir)
+
+    # Normal sync for non-worktree case
     sync_project(remote_config, project_name, exclude=exclude)
-    click.echo(f"Synced project files with remote host {host_or_alias}")
+    click.echo(f"✅ Synced project files with remote host {host_or_alias}")
+
+
+@remote.command()
+@click.argument("host_or_alias")
+@click.argument("worktree_name")
+@click.argument("main_repo_name")
+def fix_worktree(host_or_alias, worktree_name, main_repo_name):
+    """Fix Git worktree reference to point to parent repo."""
+    remote = db.get_remote_fuzzy(host_or_alias)
+    remote_config = RemoteConfig(
+        host=remote.host,
+        username=remote.username,
+        working_dir=f"~/projects/{worktree_name}",
+    )
+
+    click.echo(f"🔧 Fixing Git worktree reference for {worktree_name}...")
+    remote_cmd(
+        remote_config,
+        [
+            f"cd ~/projects/{worktree_name} && "
+            f'echo "gitdir: ../{main_repo_name}/.git/worktrees/{worktree_name}" > .git'
+        ],
+        use_working_dir=False,
+    )
+    click.echo("✅ Fixed worktree Git reference")
 
 
 @remote.command()
@@ -443,16 +666,326 @@ def sync(host_or_alias, exclude):
     default="",
     help="Comma-separated patterns to exclude (e.g., 'checkpoints,wandb')",
 )
-def fetch(host_or_alias, remote_path, local_path, exclude):
+@click.option(
+    "--worktree",
+    is_flag=True,
+    help="Fetch from worktree and update its Git reference",
+)
+@click.option(
+    "--main-repo",
+    help="Name of the main repository (for worktree setup)",
+)
+def fetch(host_or_alias, remote_path, local_path, exclude, worktree, main_repo):
     """Fetch files/directories from remote host to local."""
     exclude_patterns = exclude.split(",") if exclude else []
 
     remote = db.get_remote_fuzzy(host_or_alias)
     remote_config = RemoteConfig(host=remote.host, username=remote.username)
 
-    fetch_remote(
-        remote_config=remote_config,
-        remote_path=remote_path,
-        local_path=local_path,
-        exclude=exclude_patterns,
-    )
+    # Check if we're in a worktree context automatically
+    if worktree:
+        if not main_repo:
+            # Try to auto-detect main repo name from the current .git file
+            try:
+                if Path(".git").is_file():
+                    with open(".git", "r") as f:
+                        git_content = f.read().strip()
+                        if git_content.startswith("gitdir:"):
+                            parent_gitdir = git_content.split("gitdir:")[1].strip()
+
+                            # Extract parent repo path
+                            if "/worktrees/" in parent_gitdir:
+                                main_repo_path = parent_gitdir.split("/worktrees/")[0]
+                                main_repo_dir = Path(main_repo_path).parent
+                                main_repo = main_repo_dir.name
+
+                                click.echo(
+                                    f"🔍 Auto-detected main repository: {main_repo}"
+                                )
+            except Exception as e:
+                click.echo(f"⚠️ Could not auto-detect main repository: {e}")
+                if not click.confirm(
+                    "Continue without main repository reference?", default=False
+                ):
+                    raise click.ClickException(
+                        "Main repository name required for worktree mode. Use --main-repo."
+                    )
+
+        # Get the worktree-specific files first
+        click.echo(f"📥 Fetching worktree files from {remote_path}...")
+        fetch_remote(
+            remote_config=remote_config,
+            remote_path=remote_path,
+            local_path=local_path,
+            exclude=exclude_patterns,
+        )
+
+        # If main repo is known, fix the .git file
+        if main_repo:
+            # Extract the worktree name from the remote path
+            worktree_name = Path(remote_path).name
+
+            click.echo(f"🔧 Setting up Git worktree reference to {main_repo}...")
+
+            # Create or fix .git file to point to the parent repo
+            local_path_obj = Path(local_path)
+            git_file_path = local_path_obj / ".git"
+
+            # Only proceed if we found a .git file or we're at the root of a path
+            if (
+                git_file_path.exists()
+                or local_path_obj.resolve() == Path(".").resolve()
+            ):
+                with open(
+                    git_file_path if git_file_path.exists() else ".git", "w"
+                ) as f:
+                    f.write(f"gitdir: ../{main_repo}/.git/worktrees/{worktree_name}")
+                click.echo(
+                    f"✅ Git worktree reference updated in {git_file_path if git_file_path.exists() else '.git'}"
+                )
+            else:
+                click.echo("⚠️ Could not find .git file to update")
+    else:
+        # Normal fetch without worktree handling
+        fetch_remote(
+            remote_config=remote_config,
+            remote_path=remote_path,
+            local_path=local_path,
+            exclude=exclude_patterns,
+        )
+
+
+@remote.command()
+@click.argument("direction", type=click.Choice(["up", "down"]))
+@click.argument("host_or_alias", required=False)
+@click.option(
+    "--local-dir",
+    "-l",
+    default="assets/checkpoints/",
+    help="Local directory path to sync",
+)
+@click.option(
+    "--remote-dir",
+    "-r",
+    default=None,
+    help="Remote rclone path (e.g., 'gdbackup:research/my-checkpoints/')",
+)
+@click.option(
+    "--project-name",
+    "-p",
+    default=None,
+    help="Project name (used as part of remote path if remote-dir not specified)",
+)
+@click.option(
+    "--transfers",
+    default=16,
+    help="Number of file transfers to run in parallel",
+)
+@click.option(
+    "--checkers",
+    default=32,
+    help="Number of checkers to run in parallel",
+)
+@click.option(
+    "--chunk-size",
+    default="128M",
+    help="Drive chunk size for uploads",
+)
+@click.option(
+    "--cutoff",
+    default="256M",
+    help="Drive upload cutoff size",
+)
+@click.option(
+    "--exclude",
+    "-e",
+    default="*.tmp,*.temp,*.DS_Store,__pycache__/*",
+    help="Comma-separated patterns to exclude",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["local", "host", "container"]),
+    default="local",
+    help="Where to run rclone: local machine, remote host, or inside container",
+)
+@click.option(
+    "--container-name",
+    default=None,
+    help="Container name to use (defaults to project name)",
+)
+@click.option(
+    "--username",
+    default="ubuntu",
+    help="Remote username (only used with host or container mode)",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Perform a trial run with no changes made",
+)
+@click.option(
+    "--verbose/--quiet",
+    "-v/-q",
+    default=True,
+    help="Enable/disable verbose output",
+)
+def datasync(
+    direction,
+    host_or_alias,
+    local_dir,
+    remote_dir,
+    project_name,
+    transfers,
+    checkers,
+    chunk_size,
+    cutoff,
+    exclude,
+    mode,
+    container_name,
+    username,
+    dry_run,
+    verbose,
+):
+    """Sync data between local, remote host, and cloud storage using rclone.
+
+    Examples:
+        # Run rclone locally to sync with cloud storage
+        mltoolbox remote datasync up
+
+        # Run rclone on remote host to sync between host and cloud
+        mltoolbox remote datasync up myserver --mode host
+
+        # Run rclone inside container to sync container data with cloud
+        mltoolbox remote datasync down myserver --mode container
+
+        # Specify custom paths
+        mltoolbox remote datasync up myserver -l data/images/ -r gdbackup:research/images/ --mode host
+    """
+    # If project name not specified, use current directory name
+    if not project_name:
+        project_name = Path.cwd().name
+
+    # Set container name if not specified
+    if not container_name:
+        container_name = project_name.lower()
+
+    # Build remote path if not provided
+    if not remote_dir:
+        remote_dir = f"gdbackup:research/{project_name}-data/"
+        click.echo(f"No remote directory specified, using: {remote_dir}")
+
+    # Handle remote operation if needed
+    if mode in ["host", "container"] and not host_or_alias:
+        raise click.ClickException(f"Host or alias required for '{mode}' mode")
+
+    # Get remote configuration if needed
+    remote_config = None
+    if mode in ["host", "container"] and host_or_alias:
+        if re.match(
+            r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$",
+            host_or_alias,
+        ):
+            # Direct IP address
+            host = host_or_alias
+        else:
+            # Alias - look up in database
+            remote = db.get_remote_fuzzy(host_or_alias)
+            host = remote.host
+            username = remote.username
+
+        remote_config = RemoteConfig(
+            host=host,
+            username=username,
+            working_dir=f"~/projects/{project_name}",
+        )
+
+    # Ensure local directory exists when in local mode
+    if mode == "local":
+        local_dir_path = Path(local_dir)
+        local_dir_path.mkdir(parents=True, exist_ok=True)
+
+    # Determine source and destination based on direction
+    if direction == "up":
+        source_dir = local_dir
+        dest_dir = remote_dir
+    else:  # down
+        source_dir = remote_dir
+        dest_dir = local_dir
+
+    # Build rclone command based on mode
+    if mode == "local":
+        # Run locally
+        click.echo(f"Syncing from {source_dir} to {dest_dir} on local machine...")
+        run_rclone_sync(
+            source_dir,
+            dest_dir,
+            transfers,
+            checkers,
+            chunk_size,
+            cutoff,
+            exclude,
+            dry_run,
+            verbose,
+        )
+
+    elif mode == "host":
+        # Ensure rclone is set up on remote
+        setup_rclone(remote_config)
+
+        # Run on remote host
+        click.echo(f"Syncing from {source_dir} to {dest_dir} on remote host...")
+
+        # Create destination directory if needed
+        if direction == "down" and not dest_dir.startswith(
+            ("gdrive:", "gdbackup:", "s3:", "b2:")
+        ):
+            remote_cmd(
+                remote_config,
+                [f"mkdir -p {dest_dir}"],
+                interactive=True,
+            )
+
+        # Build rclone command for remote execution
+        rclone_cmd = build_rclone_cmd(
+            source_dir,
+            dest_dir,
+            transfers,
+            checkers,
+            chunk_size,
+            cutoff,
+            exclude,
+            dry_run,
+            verbose,
+        )
+
+        # Execute on remote host
+        remote_cmd(
+            remote_config,
+            [" ".join(rclone_cmd)],
+            interactive=True,
+        )
+
+    elif mode == "container":
+        # Run inside the container on remote host
+        click.echo(f"Syncing from {source_dir} to {dest_dir} inside container...")
+
+        # Build rclone command for container execution
+        rclone_cmd = build_rclone_cmd(
+            source_dir,
+            dest_dir,
+            transfers,
+            checkers,
+            chunk_size,
+            cutoff,
+            exclude,
+            dry_run,
+            verbose,
+        )
+
+        # Execute inside container
+        docker_cmd = f"cd ~/projects/{project_name} && docker compose exec {container_name} {' '.join(rclone_cmd)}"
+        remote_cmd(
+            remote_config,
+            [docker_cmd],
+            interactive=True,
+        )

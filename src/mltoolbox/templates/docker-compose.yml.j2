@@ -14,8 +14,15 @@ services:
         - PROJECT_NAME=${PROJECT_NAME}
         - VARIANT=${VARIANT}
     volumes:
+      # Mount the current directory at both /workspace/PROJECT_NAME and the directory name
+      # This allows both the standard environment and worktrees to work
       - .:/workspace/${PROJECT_NAME}
+      # Allow flexible mounting for any worktree paths
+      - .:/workspace/${WORKTREE_NAME:-${PROJECT_NAME}}
+      # Assets are mounted with both paths to maintain accessibility
       - ./assets:/workspace/${PROJECT_NAME}/assets
+      - ./assets:/workspace/${WORKTREE_NAME:-${PROJECT_NAME}}/assets
+      # Standard mounts
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
       - ./.vscode-server:/.vscode-server
       - ${HOME}/.ssh:/root/.ssh

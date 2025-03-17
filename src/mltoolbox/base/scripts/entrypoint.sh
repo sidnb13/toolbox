@@ -7,9 +7,13 @@ if command -v nvidia-ctk &>/dev/null; then
     nvidia-ctk system create-dev-char-symlinks --create-all || true
 fi
 
-# Change to project directory if PROJECT_NAME is set
-if [ ! -z "${PROJECT_NAME}" ]; then
-    cd /workspace/${PROJECT_NAME}
+# Support both PROJECT_NAME and WORKTREE_NAME
+WORKSPACE_DIR=${WORKTREE_NAME:-${PROJECT_NAME}}
+
+# Change to worktree directory if WORKTREE_NAME is set, otherwise PROJECT_NAME
+if [ ! -z "${WORKSPACE_DIR}" ]; then
+    echo "🌲 Using workspace directory: /workspace/${WORKSPACE_DIR}"
+    cd /workspace/${WORKSPACE_DIR}
 fi
 
 echo "🖥️  Container System Information:"
@@ -52,9 +56,45 @@ echo "📂 Current working directory: $(pwd)"
 
 # Move git config setup to beginning before any other operations
 echo "🔧 Setting up git configuration..."
-git config --global --replace-all user.email "${GIT_EMAIL}"
-git config --global --replace-all user.name "${GIT_NAME}"
-git config --global --replace-all safe.directory /workspace/${PROJECT_NAME}
+# Allow Git to work across filesystem boundaries
+export GIT_DISCOVERY_ACROSS_FILESYSTEM=1
+
+git config --global --replace-all user.email "${GIT_EMAIL}" || true
+git config --global --replace-all user.name "${GIT_NAME}" || true
+
+# Trust all directories in container
+git config --global --replace-all safe.directory '*' || true
+git config --global --replace-all safe.directory '/workspace' || true
+git config --global --replace-all safe.directory '/workspace/*' || true
+
+# Special handling for worktree case
+if [ ! -z "${WORKTREE_NAME}" ] && [ "${WORKTREE_NAME}" != "${PROJECT_NAME}" ]; then
+    echo "🌲 Setting up Git worktree environment"
+    
+    # Make sure both project and worktree paths are trusted
+    git config --global --replace-all safe.directory "/workspace/${PROJECT_NAME}" || true
+    git config --global --replace-all safe.directory "/workspace/${WORKTREE_NAME}" || true
+    
+    # Check if we're in a git worktree
+    if [ -f ".git" ] && grep -q "gitdir:" .git; then
+        echo "✅ Git worktree detected"
+        
+        # Extract parent repo path
+        MAIN_REPO=$(cat .git | grep gitdir: | sed 's/gitdir: //' | grep -oP '\/workspace\/\K[^/]+(?=\/.git)')
+        if [ ! -z "${MAIN_REPO}" ]; then
+            echo "🔍 Detected parent repository: ${MAIN_REPO}"
+            
+            # Fix symbolic links if needed
+            if ! grep -q "/workspace/${MAIN_REPO}" .git; then
+                echo "🔧 Updating Git worktree reference..."
+                echo "gitdir: /workspace/${MAIN_REPO}/.git/worktrees/${WORKTREE_NAME}" > .git
+                echo "✅ Fixed Git worktree reference"
+            fi
+        fi
+    else
+        echo "📝 Not a Git worktree or .git file not found"
+    fi
+fi
 
 # Save SSH agent environment variables to a file that can be sourced
 echo "🔑 Setting up SSH agent environment..."

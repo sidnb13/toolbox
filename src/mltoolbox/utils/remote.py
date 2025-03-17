@@ -1,5 +1,7 @@
+import datetime
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -304,7 +306,7 @@ def sync_project(
     # Create remote directories
     remote_cmd(
         remote_config,
-        [f"mkdir -p ~/.config/{remote_path} ~/projects/{project_name}"],
+        [f"mkdir -p ~/.config/{remote_path} ~/projects/{remote_path}"],
         use_working_dir=False,
     )
 
@@ -350,14 +352,14 @@ def sync_project(
     rsync_cmd.extend(
         [
             f"{project_root}/",
-            f"{remote_config.username}@{remote_config.host}:~/projects/{project_name}/",
+            f"{remote_config.username}@{remote_config.host}:~/projects/{remote_path}/",
         ]
     )
 
     try:
         click.echo("📦 Starting project sync...")
         click.echo(f"From: {project_root}")
-        click.echo(f"To: {remote_config.host}:~/projects/{project_name}")
+        click.echo(f"To: {remote_config.host}:~/projects/{remote_path}")
 
         # Run rsync and stream output in real-time
         process = subprocess.Popen(
@@ -436,3 +438,119 @@ def fetch_remote(
     click.echo(f"📥 Downloading {remote_path} to {local_path}...")
     subprocess.run(rsync_cmd, check=True)
     click.echo("✅ Download complete!")
+
+
+def build_rclone_cmd(
+    source_dir,
+    dest_dir,
+    transfers,
+    checkers,
+    chunk_size,
+    cutoff,
+    exclude,
+    dry_run,
+    verbose,
+):
+    """Build rclone command with all parameters."""
+    rclone_args = [
+        "rclone",
+        "sync",
+        source_dir,
+        dest_dir,
+        f"--transfers={transfers}",
+        f"--checkers={checkers}",
+        f"--drive-chunk-size={chunk_size}",
+        f"--drive-upload-cutoff={cutoff}",
+        "--drive-use-trash=false",
+        "--stats=10s",
+        "--retries=3",
+        "--low-level-retries=10",
+    ]
+
+    # Add verbose flag if requested
+    if verbose:
+        rclone_args.extend(["--progress", "--verbose"])
+
+    # Add dry-run flag if requested
+    if dry_run:
+        rclone_args.append("--dry-run")
+
+    # Add exclude patterns
+    for pattern in exclude.split(","):
+        if pattern.strip():
+            rclone_args.append(f"--exclude={pattern.strip()}")
+
+    return rclone_args
+
+
+def run_rclone_sync(
+    source_dir,
+    dest_dir,
+    transfers,
+    checkers,
+    chunk_size,
+    cutoff,
+    exclude,
+    dry_run,
+    verbose,
+):
+    """Execute rclone sync command locally with all parameters."""
+    # Build rclone command
+    rclone_args = build_rclone_cmd(
+        source_dir,
+        dest_dir,
+        transfers,
+        checkers,
+        chunk_size,
+        cutoff,
+        exclude,
+        dry_run,
+        verbose,
+    )
+
+    # Execute rclone command
+    click.echo(f"Running: {' '.join(rclone_args)}")
+
+    try:
+        # Create log files
+        log_path = Path.home() / "rclone.log"
+        history_path = Path.home() / "sync_history.log"
+
+        # Execute the command and capture output
+        process = subprocess.Popen(
+            rclone_args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1,
+        )
+
+        # Stream output to both console and log file
+        with open(log_path, "w") as log_file:
+            for line in iter(process.stdout.readline, ""):
+                sys.stdout.write(line)
+                log_file.write(line)
+
+        # Wait for process to complete
+        exit_code = process.wait()
+
+        # Log result
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        result_msg = f"{timestamp}: Sync "
+        if exit_code == 0:
+            result_msg += "successful"
+            click.echo(f"\n✅ {result_msg}")
+        else:
+            result_msg += f"failed with exit code {exit_code}"
+            click.echo(f"\n❌ {result_msg}")
+
+        # Append to history log
+        with open(history_path, "a") as history_file:
+            history_file.write(result_msg + "\n")
+
+        if exit_code != 0:
+            raise click.ClickException(f"rclone sync failed with exit code {exit_code}")
+
+    except Exception as e:
+        click.echo(f"Error during sync: {e}")
+        raise click.ClickException(str(e))
