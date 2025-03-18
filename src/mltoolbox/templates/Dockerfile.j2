@@ -19,12 +19,7 @@ RUN uv pip install --system --no-cache-dir --no-upgrade -r /tmp/requirements.txt
     uv pip install --system --no-cache-dir --no-upgrade -r /tmp/requirements-ray.txt && \
     rm /tmp/requirements.txt /tmp/requirements-ray.txt || true
 
-ENV PYTHONPATH=/opt/ray:${PYTHONPATH}
-ENV PATH=/opt/ray/bin:${PATH}
-RUN mkdir -p /opt/ray && \
-    uv pip install --system --target=/opt/ray "ray[default,serve]" opencensus-ext-prometheus prometheus_client setuptools && \
-    uv pip install --system --target=/opt/ray -r /tmp/requirements-ray.txt && \
-    ln -s /opt/ray/bin/ray /usr/local/bin/ray
+RUN uv pip install --system "ray[default,serve]" opencensus-ext-prometheus prometheus_client setuptools
 
 # If python package exists, install it
 RUN python setup.py develop || true \
@@ -33,9 +28,6 @@ RUN python setup.py develop || true \
 
 COPY scripts/entrypoint.sh scripts/install.sh* /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
-
-# Run install script if exists
-RUN if [ -f /usr/local/bin/install.sh ]; then bash /usr/local/bin/install.sh; fi
 
 ENTRYPOINT ["/usr/bin/ssh-agent", "/usr/local/bin/entrypoint.sh"]
 CMD ["zsh"]
