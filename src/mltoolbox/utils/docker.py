@@ -295,8 +295,11 @@ def start_container(
     # Check container status to determine if we need to rebuild
     container_name = container_name.lower()
 
+    # Add sudo when using remote connections
+    docker_cmd_prefix = ["sudo", "docker"] if remote_config else ["docker"]
+
     container_status_cmd = [
-        "docker",
+        *docker_cmd_prefix,
         "ps",
         "-a",
         "--filter",
@@ -339,10 +342,36 @@ def start_container(
             remote_config, project_name, env_updates, container_name=container_name
         )
 
-    # Start in detached mode
-    base_cmd = ["docker", "compose", "up", "-d"]
-    if build:
-        base_cmd.append("--build")
-    base_cmd.append(container_name)
+    # Define critical environment variables
+    critical_env = {
+        "PROJECT_NAME": project_name,
+        "CONTAINER_NAME": container_name,
+    }
 
-    cmd_wrap(base_cmd)
+    # Start in detached mode with explicit env vars
+    if remote_config:
+        # For remote, prepend env vars to the command and use sudo for docker compose
+        env_string = " ".join([f"{k}={v}" for k, v in critical_env.items()])
+        base_cmd = f"{env_string} sudo docker compose up -d"
+        if build:
+            base_cmd += " --build"
+        base_cmd += f" {container_name}"
+        cmd_wrap([base_cmd])
+    else:
+        # For local, use environment parameter
+        base_cmd = ["docker", "compose", "up", "-d"]
+        if build:
+            base_cmd.append("--build")
+        base_cmd.append(container_name)
+
+        env = os.environ.copy()
+        env.update(critical_env)
+
+        subprocess.run(
+            base_cmd,
+            env=env,
+            stdout=None,
+            stderr=None,
+            text=True,
+            check=False,
+        )

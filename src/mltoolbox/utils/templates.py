@@ -154,10 +154,16 @@ def generate_project_files(
 
     # Create required requirements files ONLY if they don't exist
     req_files = [
-        "requirements.txt",
-        f"requirements-{variant}.txt",
-        f"requirements-env-{env_variant}.txt",
+        "requirements.txt",  # Base requirements file
     ]
+
+    # Only add variant-specific requirements if not default
+    if variant != "default":
+        req_files.append(f"requirements-{variant}.txt")
+
+    # Only add env-variant-specific requirements if not default
+    if env_variant != "default":
+        req_files.append(f"requirements-{env_variant}.txt")
 
     if ray:
         req_files.append("requirements-ray.txt")
