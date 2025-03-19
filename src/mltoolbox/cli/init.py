@@ -23,6 +23,17 @@ from mltoolbox.utils.templates import generate_project_files
     help="Python version to use",
 )
 @click.option(
+    "--variant",
+    default="cuda",
+    type=click.Choice(["cuda", "gh200"]),
+    help="System variant to use",
+)
+@click.option(
+    "--env-variant",
+    default="default",
+    help="Environment variant to use (e.g., a10, a100)",
+)
+@click.option(
     "--ssh-key-name",
     default="id_ed25519",
     help="SSH key name to use (e.g., 'github', 'id_ed25519')",
@@ -33,6 +44,8 @@ def init(
     force: bool = False,
     inside_project: bool = False,
     python_version: str = "3.12",
+    variant: str = "cuda",
+    env_variant: str = "default",
     ssh_key_name: str = "id_ed25519",
 ):
     """Initialize a new ML project."""
@@ -71,8 +84,6 @@ def init(
         "git_name": git_name,
         "git_email": git_email,
         "github_token": github_token,
-        "skypilot_docker_password": github_token,
-        "skypilot_docker_username": git_name,
         "project_name": project_name,
         "wandb_project": project_name,
         "wandb_entity": git_name,  # default to git username
@@ -92,9 +103,12 @@ def init(
         ray=ray,
         env_vars=template_env,
         python_version=python_version,
+        variant=variant,
+        env_variant=env_variant,
     )
 
-    click.echo(f"✨ Project {project_name} initialized!")
+    click.echo(f"✨ Project {project_name} (re)initialized!")
+    click.echo(f"🧩 System variant: {variant}, Environment variant: {env_variant}")
     click.echo("\nNext steps:")
     click.echo("1. Add your requirements to requirements.txt")
     click.echo("2. Run 'mltoolbox container start' to begin development")

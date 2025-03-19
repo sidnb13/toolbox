@@ -92,6 +92,8 @@ def generate_project_files(
     ray: bool,
     env_vars: dict,
     python_version: str = "3.12",
+    variant: str = "cuda",
+    env_variant: str = "default",
 ) -> None:
     """Generate project files from templates"""
     # Create directory structure
@@ -106,13 +108,15 @@ def generate_project_files(
     project_entrypoint.chmod(0o755)  # Make executable
 
     context = {
-        "project_name": project_name,
+        "project_name": project_name.lower(),
         "ray": ray,
         "container_name": project_name.lower(),
         "python_version": python_version,
+        "variant": variant,
+        "env_variant": env_variant,
         **env_vars,
     }
-    
+
     # Generate docker-compose.yml
     docker_compose = render_template("docker-compose.yml.j2", **context)
     (project_dir / "docker-compose.yml").write_text(docker_compose)
@@ -121,14 +125,8 @@ def generate_project_files(
     dockerfile = render_template("Dockerfile.j2", **context)
     (project_dir / "Dockerfile").write_text(dockerfile)
 
-    # Generate .env from template first, then merge with existing
+    # Parse the template ENV into a dict
     env_template = render_template(".env.j2", **context)
-
-    # Generate skypilot launch config
-    # skypilot_cfg = render_template("skypilot.yml.j2", **context)
-    # (project_dir / "skypilot.yml").write_text(skypilot_cfg)
-
-    # Parse the rendered template into a dict
     template_env = {}
     for line in env_template.splitlines():
         if line.strip() and not line.startswith("#"):
@@ -137,6 +135,10 @@ def generate_project_files(
                 template_env[key.strip()] = value.strip().strip('"')
             except ValueError:
                 continue
+
+    # Add variant environment variables
+    template_env["VARIANT"] = variant
+    template_env["ENV_VARIANT"] = env_variant
 
     # Merge with existing .env if it exists
     merged_env = merge_env_files(project_dir, template_env)
@@ -150,5 +152,24 @@ def generate_project_files(
                 value = f'"{value}"'
             f.write(f"{key}={value}\n")
 
-    # Create empty requirements.txt
-    merge_requirements(project_dir)
+    # Create required requirements files ONLY if they don't exist
+    req_files = [
+        "requirements.txt",
+        f"requirements-{variant}.txt",
+        f"requirements-env-{env_variant}.txt",
+    ]
+
+    if ray:
+        req_files.append("requirements-ray.txt")
+
+    for req_file in req_files:
+        req_path = project_dir / req_file
+        if not req_path.exists():
+            with open(req_path, "w") as f:
+                f.write(f"# {req_file} dependencies\n")
+                if "ray" in req_file and req_file == "requirements-ray.txt":
+                    f.write("ray[default,serve]\n")
+
+    # Only create base requirements.txt if it doesn't exist
+    if not (project_dir / "requirements.txt").exists():
+        merge_requirements(project_dir)

@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 import click
 
@@ -68,7 +69,7 @@ def update_env_file(
         container_name: Optional container name, defaults to project_name if not provided
     """
     # Use container_name if provided, otherwise default to project_name
-    container_name = container_name or project_name
+    container_name = (container_name or project_name).lower()
 
     # Read current env file content
     try:
@@ -235,11 +236,24 @@ def setup_conda_env(
 
 
 def sync_project(
-    remote_config: RemoteConfig, project_name: str, remote_path=None, exclude: list = ""
+    remote_config: RemoteConfig,
+    project_name: str,
+    remote_path=None,
+    exclude: list = "",
+    source_path: Optional[Path] = None,
 ) -> None:
-    """Sync project files with remote host (one-way, local to remote)"""
+    """Sync project files with remote host (one-way, local to remote)
+
+    Args:
+        remote_config: Remote configuration
+        project_name: Project name
+        remote_path: Optional custom remote path to use instead of project_name
+        exclude: Patterns to exclude
+        source_path: Optional source path to sync from (defaults to current directory)
+    """
 
     remote_path = remote_path or project_name
+    project_root = source_path if source_path else Path.cwd()
 
     # Check if project directory exists and is a git repo
     check_git = remote_cmd(
@@ -301,8 +315,6 @@ def sync_project(
     if not do_project_sync:
         return
 
-    project_root = Path.cwd()
-
     # Create remote directories
     remote_cmd(
         remote_config,
@@ -339,6 +351,7 @@ def sync_project(
         "--no-perms",  # Don't sync permissions
         "--no-owner",  # Don't sync owner
         "--no-group",  # Don't sync group
+        "--ignore-errors",  # Delete even if there are I/O errors
         "--chmod=Du=rwx,go=rx,Fu=rw,go=r",  # Set sane permissions
         "-e",
         "ssh -o StrictHostKeyChecking=no",  # Less strict SSH checking

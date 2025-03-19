@@ -7,6 +7,8 @@ from typing import Optional
 
 import click
 
+from mltoolbox.utils.remote import update_env_file
+
 from .helpers import RemoteConfig, remote_cmd
 
 
@@ -332,8 +334,6 @@ def start_container(
             env_updates["HOST_RAY_DASHBOARD_PORT"] = host_ray_dashboard_port
         if host_ray_client_port:
             env_updates["HOST_RAY_CLIENT_PORT"] = host_ray_client_port
-
-        from mltoolbox.utils.remote import update_env_file
 
         update_env_file(
             remote_config, project_name, env_updates, container_name=container_name
