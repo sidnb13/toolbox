@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "mltoolbox"
 version = "2.0.0.dev0"
 description = "ML Development Environment Management Tools"
-requires-python = ">=3.8"
+requires-python = ">=3.8,<3.12"
 dependencies = [
     "click>=8.0.0",
     "python-dotenv>=0.19.0",
@@ -15,6 +15,39 @@ dependencies = [
     "tomli>=2.0.0",
     "setuptools==68.2.2",
     "paramiko==3.5.0",
+]
+
+[project.optional-dependencies]
+monitoring = [
+    # GPU monitoring
+    "nvidia-ml-py",
+    "gputil",
+    "psutil",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "websockets",
+    "aiohttp",
+    "python-dotenv",
+    "slack-sdk",
+    "discord.py",
+    "slack_bolt",
+    "psycopg2-binary",
+    "openapi-client",
+    "redis",
+]
+agent = [
+    # Agent-specific dependencies
+    "redis",
+    "ray[default]",
+]
+dev = [
+    "ruff",
+    "ipykernel",
+    "jupyter",
+]
+all = [
+    "mltoolbox[monitoring,agent,dev]",
 ]
 
 [project.scripts]
@@ -26,3 +59,5 @@ packages = ["src/mltoolbox"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/mltoolbox/base" = "mltoolbox/base"
 "src/mltoolbox/templates" = "mltoolbox/templates"
+"src/mltoolbox/monitoring/requirements" = "mltoolbox/monitoring/requirements"
+"docker/monitoring" = "mltoolbox/docker/monitoring"

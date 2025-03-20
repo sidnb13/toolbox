@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy all necessary files
+COPY requirements*.txt ./
+COPY setup.py .
+COPY logger.py .
+COPY gpu_monitor ./gpu_monitor
+COPY lambda_client ./lambda_client
+
+# Install the package with monitor extras
+RUN pip3 install --no-cache-dir -e .[monitor] && pip3 install --no-cache-dir -e lambda_client
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python3", "-m", "gpu_monitor.main"]

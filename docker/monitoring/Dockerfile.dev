@@ -1,0 +1,65 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies and utilities
+RUN apt-get update && apt-get install -y \
+    gcc \
+    git \
+    wget \
+    screen \
+    curl \
+    openssh-server \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g npm@latest \
+    && sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh)" -- \
+    -t robbyrussell \
+    -p git \
+    && rm -rf /var/lib/apt/lists/* \
+    && chsh -s $(which zsh)
+
+# Configure SSH
+RUN mkdir /var/run/sshd && \
+    echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && \
+    echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config
+
+SHELL ["/bin/zsh", "-c"]
+
+ARG GIT_USER
+ARG GIT_EMAIL
+
+# Set Git configuration environment variables
+ENV GIT_USER=${GIT_USER}
+ENV GIT_EMAIL=${GIT_EMAIL}
+
+# Setup SSH
+RUN git config --global url."git@github.com:".insteadOf "https://github.com/" && \
+    git config --global user.email "${GIT_EMAIL}" && \
+    git config --global user.name "${GIT_USER}"
+
+# Copy and install frontend dependencies
+COPY dashboard/package*.json ./dashboard/
+WORKDIR /app/dashboard
+RUN npm install --legacy-peer-deps
+WORKDIR /app
+
+# Copy application code
+COPY . .
+
+RUN pip3 install --no-cache-dir -e '.[agent,monitor]' && pip3 install --no-cache-dir -e lambda_client
+
+ENV PYTHONUNBUFFERED=1
+
+COPY <<EOF /start.sh
+#!/bin/zsh
+# Start ssh-agent and add GitHub key
+eval \$(ssh-agent -s)
+ssh-add /root/.ssh/github
+# Keep container running
+tail -f /dev/null
+EOF
+
+RUN chmod +x /start.sh
+
+CMD ["/start.sh"]

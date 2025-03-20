@@ -1,0 +1,21 @@
+# GPU monitoring
+nvidia-ml-py
+gputil
+
+# System monitoring
+psutil
+paramiko
+
+# Redis integration
+redis
+
+# API and async support
+fastapi
+uvicorn
+pydantic
+websockets
+aiohttp
+
+# Utils
+python-dotenv
+ray[default]

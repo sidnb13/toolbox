@@ -1,0 +1,23 @@
+FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
+
+WORKDIR /app
+
+# Install Python and system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3-pip \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy all necessary files
+COPY requirements*.txt ./
+COPY setup.py .
+COPY gpu_monitor ./gpu_monitor
+COPY agent ./agent
+
+# Install the package with agent extras
+RUN pip3 install --no-cache-dir -e .[agent]
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python3", "-m", "agent.main"]

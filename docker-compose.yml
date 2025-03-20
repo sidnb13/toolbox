@@ -1,0 +1,91 @@
+services:
+  monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.monitor
+    ports:
+      - "8001:8001"
+    environment:
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - MONITOR_HOST=0.0.0.0
+      - MONITOR_PORT=8001
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    platform: linux/amd64
+    depends_on:
+      - redis
+      - db
+    env_file:
+      - .env.monitor
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: gpumonitor
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d gpumonitor"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    ports:
+      - "8000:8000"
+    environment:
+      - AGENT_HOST=0.0.0.0
+      - AGENT_PORT=8000
+      - MONITOR_URL=${MONITOR_URL:-http://monitor:8001}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+    volumes:
+      - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    depends_on:
+      - redis
+    env_file:
+      - .env.agent
+
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8002:8000"
+    environment:
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+    volumes:
+      - .:/app
+      - ~/.ssh/github:/root/.ssh/github:ro
+    platform: linux/arm64
+    depends_on:
+      - redis
+      - db
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+volumes:
+  redis_data:
+  postgres_data:

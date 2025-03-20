@@ -92,7 +92,7 @@ def direct(
 
     # Connect to container - use full path to docker compose
     # Use worktree_name for directory but container_name for the actual container
-    cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{worktree_name} {container_name} zsh"
+    cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {container_name} zsh"
 
     # Build SSH command with port forwarding
     ssh_args = [
