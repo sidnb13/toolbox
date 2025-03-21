@@ -19,6 +19,7 @@ services:
     volumes:
       - .:/workspace/${PROJECT_NAME}
       - ~/.ssh:/root/.ssh
+      - ~/.config/rclone:/root/.config/rclone
     ports:
       {% if ray %}
       - "${RAY_DASHBOARD_PORT:-8265}:8265"
@@ -31,6 +32,18 @@ services:
       - PROJECT_NAME=${PROJECT_NAME}
       - SYSTEM_VARIANT=${VARIANT:-{{ variant }}}
       - ENV_VARIANT=${ENV_VARIANT:-{{ env_variant }}}
+        {% if ray %}
+    command: >
+      zsh -c "
+      ray start --head \
+      --include-dashboard=true \
+      --dashboard-host=0.0.0.0 \
+      --dashboard-port=8265 \
+      --port=6379 \
+      --ray-client-server-port=10001 \
+      --node-ip-address=0.0.0.0 \
+      --block"
+    {% endif %}
     deploy:
       resources:
         reservations:

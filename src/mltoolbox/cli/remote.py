@@ -1,6 +1,8 @@
 import os
+from pydoc import cli
 import re
 from pathlib import Path
+from unittest import skip
 
 import click
 from dotenv import load_dotenv
@@ -92,7 +94,7 @@ def direct(
 
     # Connect to container - use full path to docker compose
     # Use worktree_name for directory but container_name for the actual container
-    cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{worktree_name} {container_name} zsh"
+    cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {container_name} zsh"
 
     # Build SSH command with port forwarding
     ssh_args = [
@@ -168,6 +170,7 @@ def direct(
     default="",
     help="Comma-separated patterns to exclude (e.g., 'checkpoints,wandb')",
 )
+@click.option("--skip-sync", is_flag=True, help="Skip syncing project files")
 @click.option(
     "--variant",
     type=click.Choice(["cuda", "gh200"]),
@@ -193,6 +196,7 @@ def connect(
     wait,
     timeout,
     exclude,
+    skip_sync,
     variant,
     env_variant,
     python_version,
@@ -307,12 +311,15 @@ def connect(
         )
 
         # Simple sync - no worktree detection or special handling
-        sync_project(
-            remote_config,
-            project_name,
-            remote_path=project_name,
-            exclude=exclude,
-        )
+        if not skip_sync:
+            sync_project(
+                remote_config,
+                project_name,
+                remote_path=project_name,
+                exclude=exclude,
+            )
+        else:
+            click.echo("Skipping project sync, continuing with SSH key sync...")
 
         # Set up environment first
         env_updates = {

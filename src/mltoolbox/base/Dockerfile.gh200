@@ -17,6 +17,7 @@ RUN apt-get install -y --no-install-recommends \
         curl \
         git \
         openssh-client \
+        rclone \
         sudo \
         wget \
         nvtop \

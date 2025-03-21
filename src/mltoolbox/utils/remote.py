@@ -44,6 +44,8 @@ def setup_rclone(remote_config: RemoteConfig) -> None:
         subprocess.run(
             [
                 "scp",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
                 str(local_rclone_config),
                 f"{remote_config.username}@{remote_config.host}:~/.config/rclone/rclone.conf",
             ],
@@ -299,6 +301,8 @@ def sync_project(
                 subprocess.run(
                     [
                         "scp",
+                        "-o",
+                        "StrictHostKeyChecking=accept-new",
                         str(local_ssh_dir / key_file),
                         f"{remote_config.username}@{remote_config.host}:~/.ssh/{key_file}",
                     ],
