@@ -143,6 +143,64 @@ def update_env_file(
         raise
 
 
+def setup_remote_ssh_keys(remote_config: RemoteConfig, ssh_key_name: str = None):
+    """
+    Set up SSH keys on remote host - runs commands in one session to ensure agent vars are accessible.
+    """
+    # Get key name from argument, env, or use default
+    ssh_key_name = ssh_key_name or os.environ.get("SSH_KEY_NAME", "id_ed25519")
+
+    click.echo(f"🔑 Setting up SSH key '{ssh_key_name}' on remote host...")
+
+    # Check if the key exists
+    key_check = remote_cmd(
+        remote_config,
+        [f"test -f ~/.ssh/{ssh_key_name} && echo 'exists' || echo 'missing'"],
+        use_working_dir=False,
+    ).stdout.strip()
+
+    if key_check == "missing":
+        click.echo(f"❌ SSH key '{ssh_key_name}' not found on remote host")
+        return False
+
+    # Setup agent and add key - ONLY ON THE HOST, NOT IN CONTAINER
+    ssh_agent_cmd = f"""
+    # Start SSH agent if not running
+    if [ -z "$SSH_AUTH_SOCK" ]; then
+        eval $(ssh-agent -s)
+        echo "Started new SSH agent"
+    fi
+    
+    # Temporarily fix permissions only for adding to agent
+    chmod 600 ~/.ssh/{ssh_key_name}
+    
+    # Add key to agent
+    ssh-add ~/.ssh/{ssh_key_name}
+    
+    # Save agent environment variables for later use
+    echo "export SSH_AUTH_SOCK=$SSH_AUTH_SOCK" > ~/.ssh/agent_env
+    echo "export SSH_AGENT_PID=$SSH_AGENT_PID" >> ~/.ssh/agent_env
+    """
+
+    try:
+        result = remote_cmd(
+            remote_config,
+            [ssh_agent_cmd],
+            use_working_dir=False,
+        )
+
+        if "The agent has no identities" in result.stdout:
+            click.echo("❌ Failed to add SSH key to agent")
+            return False
+
+        click.echo("✅ SSH key added successfully to host SSH agent")
+        return True
+
+    except Exception as e:
+        click.echo(f"❌ Failed to set up SSH agent: {str(e)}")
+        return False
+
+
 def wait_for_host(host: str, timeout: int | None = None) -> bool:
     """Wait for host to become available by checking both ping and SSH connectivity.
 
@@ -294,8 +352,8 @@ def sync_project(
             use_working_dir=False,
         )
 
-        # Transfer SSH keys using scp instead of rsync
-        for key_file, perms in [(ssh_key_name, "700"), (f"{ssh_key_name}.pub", "644")]:
+        # Transfer SSH keys using scp - NO PERMISSION CHANGES
+        for key_file in [ssh_key_name, f"{ssh_key_name}.pub"]:
             try:
                 # Use scp for direct file copy
                 subprocess.run(
@@ -308,13 +366,28 @@ def sync_project(
                     ],
                     check=True,
                 )
-                remote_cmd(
-                    remote_config,
-                    [f"chmod {perms} ~/.ssh/{key_file}"],
-                    use_working_dir=False,
-                )
+                click.echo(f"✅ Copied SSH key {key_file} to remote host")
             except Exception as e:
                 click.echo(f"Warning: Failed to sync {key_file}: {e}")
+
+    # Fix for the .env problem: manually copy .env file first if it exists
+    local_env_file = Path.cwd() / ".env"
+    if local_env_file.exists():
+        click.echo("📄 Syncing .env file separately to ensure it's transferred...")
+        try:
+            subprocess.run(
+                [
+                    "scp",
+                    "-o",
+                    "StrictHostKeyChecking=accept-new",
+                    str(local_env_file),
+                    f"{remote_config.username}@{remote_config.host}:~/projects/{remote_path or project_name}/.env",
+                ],
+                check=True,
+            )
+            click.echo("✅ .env file synced successfully")
+        except Exception as e:
+            click.echo(f"Warning: Failed to sync .env file: {e}")
 
     if not do_project_sync:
         return
@@ -352,7 +425,6 @@ def sync_project(
         "-avz",  # archive, verbose, compress
         "--progress",  # Show progress during transfer
         "--stats",  # Show detailed transfer statistics
-        "--no-perms",  # Don't sync permissions
         "--no-owner",  # Don't sync owner
         "--no-group",  # Don't sync group
         "--ignore-errors",  # Delete even if there are I/O errors

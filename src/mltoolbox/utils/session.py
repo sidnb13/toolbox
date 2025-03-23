@@ -110,5 +110,20 @@ class SSHSessionManager:
             with self._locks[session_key]:
                 self._remove_session(session_key)
 
+    def reload_session(self, hostname: str, username: str) -> paramiko.SSHClient:
+        """Force reload a session to pick up new group memberships or environment changes."""
+        session_key = self._get_session_key(hostname, username)
+
+        click.echo(f"🔄 Reloading SSH session for {username}@{hostname}...")
+
+        # Remove the existing session if it exists
+        if session_key in self._sessions:
+            with self._locks.get(session_key, threading.Lock()):
+                self._remove_session(session_key)
+            click.echo("✅ Previous session closed")
+
+        # Let get_session create a new connection
+        return self.get_session(hostname, username)
+
 
 session_manager = SSHSessionManager()

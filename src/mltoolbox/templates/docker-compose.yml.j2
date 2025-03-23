@@ -18,21 +18,17 @@ services:
     working_dir: /workspace/${PROJECT_NAME}
     volumes:
       - .:/workspace/${PROJECT_NAME}
-      - ~/.ssh:/root/.ssh
       - ~/.config/rclone:/root/.config/rclone
+      - type: bind
+        source: ~/.ssh
+        target: /root/.ssh
     ports:
       {% if ray %}
       - "${RAY_DASHBOARD_PORT:-8265}:8265"
       - "${RAY_CLIENT_SERVER_PORT:-10001}:10001"
       {% endif %}
       - "8000:8000"
-    environment:
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - NVIDIA_VISIBLE_DEVICES=all
-      - PROJECT_NAME=${PROJECT_NAME}
-      - SYSTEM_VARIANT=${VARIANT:-{{ variant }}}
-      - ENV_VARIANT=${ENV_VARIANT:-{{ env_variant }}}
-        {% if ray %}
+    {% if ray %}
     command: >
       zsh -c "
       ray start --head \

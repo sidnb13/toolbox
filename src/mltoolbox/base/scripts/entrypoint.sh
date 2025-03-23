@@ -1,6 +1,24 @@
 #!/bin/bash
 set -e # Exit on error
 
+# Start a new SSH agent
+eval $(ssh-agent -s)
+
+# Get SSH key name from environment variable or use default
+SSH_KEY_NAME=${SSH_KEY_NAME:-github}
+# Add the SSH key if it exists
+if [ -f "/root/.ssh/${SSH_KEY_NAME}" ]; then
+    echo "🔑 Found SSH key '${SSH_KEY_NAME}', adding to agent..."
+    ssh-add /root/.ssh/${SSH_KEY_NAME}
+    echo "✅ Added SSH key to agent"
+else
+    echo "⚠️ SSH key '/root/.ssh/${SSH_KEY_NAME}' not found"
+fi
+
+# Test SSH connection
+echo "🔍 Testing SSH connection to GitHub..."
+ssh -T git@github.com 2>&1 || true
+
 # Create NVIDIA device symlinks if nvidia-ctk is available
 if command -v nvidia-ctk &>/dev/null; then
     echo "🔧 Creating NVIDIA device symlinks..."
@@ -18,7 +36,7 @@ echo "🖥️  Container System Information:"
 if [[ "$(uname -s)" == "Linux" ]]; then
     # Report variant information
     echo "🧩 Using variants: ${SYSTEM_VARIANT:-cuda}/${ENV_VARIANT:-default}"
-    
+
     # Only run CUDA checks on Linux
     if command -v nvidia-smi &>/dev/null; then
         echo "✅ CUDA is available"
@@ -45,14 +63,14 @@ git config --global --replace-all user.name "${GIT_NAME}" || true
 git config --global --replace-all safe.directory '*' || true
 
 # Save SSH agent environment variables to a file
-echo "export SSH_AUTH_SOCK=$SSH_AUTH_SOCK" > /etc/profile.d/ssh-agent.sh
-echo "export SSH_AGENT_PID=$SSH_AGENT_PID" >> /etc/profile.d/ssh-agent.sh
+echo "export SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >/etc/profile.d/ssh-agent.sh
+echo "export SSH_AGENT_PID=$SSH_AGENT_PID" >>/etc/profile.d/ssh-agent.sh
 chmod +x /etc/profile.d/ssh-agent.sh
 
 # Source SSH environment in shell config files
-echo "source /etc/profile.d/ssh-agent.sh" >> /root/.bashrc
+echo "source /etc/profile.d/ssh-agent.sh" >>/root/.bashrc
 if [ -f /root/.zshrc ]; then
-    echo "source /etc/profile.d/ssh-agent.sh" >> /root/.zshrc
+    echo "source /etc/profile.d/ssh-agent.sh" >>/root/.zshrc
 fi
 
 # Execute the command passed to docker run

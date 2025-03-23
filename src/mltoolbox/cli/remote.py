@@ -1,8 +1,6 @@
 import os
-from pydoc import cli
 import re
 from pathlib import Path
-from unittest import skip
 
 import click
 from dotenv import load_dotenv
@@ -22,6 +20,7 @@ from mltoolbox.utils.remote import (
     run_rclone_sync,
     setup_conda_env,
     setup_rclone,
+    setup_remote_ssh_keys,
     setup_zshrc,
     sync_project,
     update_env_file,
@@ -75,9 +74,7 @@ def direct(
         project_name = env_vars.get("PROJECT_NAME", Path.cwd().name)
         container_name = env_vars.get("CONTAINER_NAME", project_name.lower())
     except Exception:
-        # Fallback if env file doesn't exist
-        project_name = Path.cwd().name
-        container_name = project_name.lower()
+        raise click.ClickException("Failed to get env variables")
 
     remote_config = RemoteConfig(
         host=host,
@@ -338,6 +335,10 @@ def connect(
             f"🔧 Updating environment with variant '{variant}' and env-variant '{env_variant}'..."
         )
         update_env_file(remote_config, project_name, env_updates)
+
+        ssh_key_name = env_vars.get("SSH_KEY_NAME", "id_ed25519")
+        # Set up SSH keys on remote host
+        setup_remote_ssh_keys(remote_config, ssh_key_name)
 
         click.echo("🚀 Starting remote container...")
         start_container(

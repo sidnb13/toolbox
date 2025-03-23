@@ -51,6 +51,7 @@ def remote_cmd(
     command: list[str],
     interactive=False,
     use_working_dir=True,
+    reload_session=False,
 ) -> subprocess.CompletedProcess:
     """Execute command on remote host using paramiko SSH."""
 
@@ -73,9 +74,12 @@ def remote_cmd(
         connect_kwargs["key_filename"] = identity_file
 
     try:
-        ssh = session_manager.get_session(
-            actual_hostname, actual_username, **connect_kwargs
-        )
+        if reload_session:
+            ssh = session_manager.reload_session(actual_hostname, actual_username)
+        else:
+            ssh = session_manager.get_session(
+                actual_hostname, actual_username, **connect_kwargs
+            )
 
         _, stdout, _ = ssh.exec_command("pwd")
         remote_cwd = stdout.read().decode().strip()
