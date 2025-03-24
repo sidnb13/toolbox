@@ -9,21 +9,26 @@ from sqlalchemy.orm import joinedload
 from mltoolbox.utils.db import DB, Remote
 from mltoolbox.utils.docker import (
     RemoteConfig,
-    check_docker_group,
-    start_container,
     verify_env_vars,
 )
 from mltoolbox.utils.helpers import remote_cmd
 from mltoolbox.utils.remote import (
     build_rclone_cmd,
+    check_docker_group_stage,
+    connect_ssh_session,
+    create_project_dirs_stage,
     fetch_remote,
     run_rclone_sync,
-    setup_conda_env,
+    setup_conda_env_stage,
     setup_rclone,
-    setup_remote_ssh_keys,
-    setup_zshrc,
+    setup_rclone_stage,
+    setup_ssh_config_stage,
+    setup_ssh_keys_stage,
+    setup_zshrc_stage,
+    start_container_stage,
     sync_project,
-    update_env_file,
+    sync_project_stage,
+    update_env_file_stage,
     wait_for_host,
 )
 
@@ -52,11 +57,13 @@ def provision():
     default=["8000:8000", "8265:8265"],
     help="Port forwarding in local:remote format",
 )
+@click.option("--force-setup", is_flag=True, help="Force re-run of all setup stages")
 def direct(
     host_or_alias,
     username,
     force_rebuild,
     forward_ports,
+    force_setup,
 ):
     """Connect directly to remote container with zero setup."""
     # Validate host IP address format
@@ -81,16 +88,23 @@ def direct(
         username=username,
         working_dir=f"~/projects/{project_name}",
     )
-    # Just start the container
-    start_container(
-        project_name,
-        container_name,
+
+    # Create a minimal set of directories needed for the container
+    create_project_dirs_stage(
+        remote_config=remote_config, project_name=project_name, force=force_setup
+    )
+
+    # Start the container using our cached stage function
+    start_container_stage(
         remote_config=remote_config,
-        build=force_rebuild,
+        project_name=project_name,
+        container_name=container_name,
+        force_rebuild=force_rebuild,
+        force=force_setup,
     )
 
     # Connect to container - use full path to docker compose
-    # Use worktree_name for directory but container_name for the actual container
+    # Use direct SSH connection rather than the helper function
     cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {container_name} zsh"
 
     # Build SSH command with port forwarding
@@ -133,7 +147,7 @@ def direct(
 @click.option(
     "--env-name", default="mltoolbox", help="Conda environment name (for conda mode)"
 )
-@click.option("--force-rebuild", is_flag=True, help="force rebuild remote container")
+@click.option("--force-rebuild", is_flag=True, help="Force rebuild remote container")
 @click.option(
     "--forward-ports",
     "-p",
@@ -180,6 +194,7 @@ def direct(
     default=None,
     help="Python version to use (e.g., '3.10', '3.11')",
 )
+@click.option("--force-setup", is_flag=True, help="Force re-run of all setup stages")
 def connect(
     host_or_alias,
     alias,
@@ -197,6 +212,7 @@ def connect(
     variant,
     env_variant,
     python_version,
+    force_setup,
 ):
     """Connect to remote development environment."""
     # Validate host IP address format
@@ -234,158 +250,91 @@ def connect(
         working_dir=f"~/projects/{project_name}",
     )
 
-    # create custom ssh config if not exists
-    ssh_config_path = Path("~/.config/mltoolbox/ssh/config").expanduser()
-    ssh_config_path.parent.mkdir(parents=True, exist_ok=True)
+    # Stage 0: Set up SSH config locally (not cached since it's a local operation)
+    setup_ssh_config_stage(remote, project_name)
 
-    # add include directive to main ssh config if needed
-    main_ssh_config_path = Path("~/.ssh/config").expanduser()
-    include_line = f"Include {ssh_config_path}\n"
-
-    if not main_ssh_config_path.exists():
-        main_ssh_config_path.touch()
-
-    with main_ssh_config_path.open("r") as f:
-        content = f.read()
-
-    if include_line not in content:
-        with main_ssh_config_path.open("w") as f:
-            f.write(include_line + content)
-
-    # Read existing config and filter out previous entries for this host/alias
-    existing_config = []
-    current_host = None
-    skip_block = False
-
-    if ssh_config_path.exists():
-        with ssh_config_path.open("r") as f:
-            for line in f:
-                if line.startswith("Host "):
-                    current_host = line.split()[1].strip()
-                    # Skip this block if it matches our alias, regardless of host
-                    skip_block = current_host == remote.alias
-                if not skip_block:
-                    existing_config.append(line)
-                elif not line.strip() or line.startswith("Host "):
-                    skip_block = False
-
-    # Write updated config
-    with ssh_config_path.open("w") as f:
-        # Write existing entries (excluding the one we're updating)
-        f.writelines(existing_config)
-
-        # Add a newline if the file doesn't end with one
-        if existing_config and not existing_config[-1].endswith("\n"):
-            f.write("\n")
-
-        # Write the new/updated entry
-        f.write(f"Host {remote.alias}\n")
-        f.write(f"    HostName {remote.host}\n")
-        f.write(f"    User {remote.username}\n")
-        f.write("    ForwardAgent yes\n\n")
-
-    click.echo(f"Access your instance with `ssh {remote.alias}`")
-
-    setup_zshrc(remote_config)
-    setup_rclone(remote_config)
-
-    click.echo(f"📁 Creating remote project directories for {project_name}")
-    remote_cmd(
-        remote_config,
-        [f"mkdir -p ~/projects/{project_name}"],
-        use_working_dir=False,
+    # Stage 1: Basic Shell Setup
+    setup_zshrc_stage(
+        remote_config=remote_config, project_name=project_name, force=force_setup
+    )
+    setup_rclone_stage(
+        remote_config=remote_config, project_name=project_name, force=force_setup
+    )
+    create_project_dirs_stage(
+        remote_config=remote_config, project_name=project_name, force=force_setup
     )
 
+    # Mode-specific stages
     if mode == "container":
-        check_docker_group(remote_config)
-        click.echo("✅ Docker group checked")
-
-        # First ensure remote directory exists
-        remote_cmd(
-            remote_config,
-            [f"mkdir -p ~/projects/{project_name}"],
-            use_working_dir=False,
-        )
-
-        # Simple sync - no worktree detection or special handling
-        if not skip_sync:
-            sync_project(
-                remote_config,
-                project_name,
-                remote_path=project_name,
-                exclude=exclude,
-            )
-        else:
-            click.echo("Skipping project sync, continuing with SSH key sync...")
-
-        # Set up environment first
-        env_updates = {
-            "VARIANT": variant,
-            "ENV_VARIANT": env_variant,
-            "NVIDIA_DRIVER_CAPABILITIES": "all",
-            "NVIDIA_VISIBLE_DEVICES": "all",
-        }
-
-        # Add Python version to environment if specified
-        if python_version:
-            env_updates["PYTHON_VERSION"] = python_version
-            click.echo(f"🐍 Setting Python version to {python_version}")
-
-        click.echo(
-            f"🔧 Updating environment with variant '{variant}' and env-variant '{env_variant}'..."
-        )
-        update_env_file(remote_config, project_name, env_updates)
-
-        ssh_key_name = env_vars.get("SSH_KEY_NAME", "id_ed25519")
-        # Set up SSH keys on remote host
-        setup_remote_ssh_keys(remote_config, ssh_key_name)
-
-        click.echo("🚀 Starting remote container...")
-        start_container(
-            project_name,
-            container_name,
+        # Stage 2: Docker Setup
+        check_docker_group_stage(
             remote_config=remote_config,
-            build=force_rebuild,
+            project_name=project_name,
+            force=force_setup,
+            username=remote.username,
+        )
+
+        # Stage 3: Project Sync
+        sync_project_stage(
+            remote_config=remote_config,
+            project_name=project_name,
+            force=force_setup,
+            exclude=exclude,
+            skip_sync=skip_sync,
+        )
+
+        # Stage 4: Environment Configuration
+        update_env_file_stage(
+            remote_config=remote_config,
+            project_name=project_name,
+            force=force_setup,
+            variant=variant,
+            env_variant=env_variant,
+            python_version=python_version,
+        )
+
+        # Stage 5: SSH Key Setup
+        ssh_key_name = env_vars.get("SSH_KEY_NAME", "id_ed25519")
+        setup_ssh_keys_stage(
+            remote_config=remote_config,
+            project_name=project_name,
+            force=force_setup,
+            ssh_key_name=ssh_key_name,
+        )
+
+        # Stage 6: Container Start
+        start_container_stage(
+            remote_config=remote_config,
+            project_name=project_name,
+            force=force_setup,
+            container_name=container_name,
+            force_rebuild=force_rebuild,
             host_ray_dashboard_port=host_ray_dashboard_port,
             host_ray_client_port=host_ray_client_port,
+            variant=variant,
+            env_variant=env_variant,
+            python_version=python_version,
         )
+
     elif mode == "conda":
-        click.echo("🔧 Setting up conda environment...")
-        setup_conda_env(remote_config, env_name)
+        # Conda setup stage
+        setup_conda_env_stage(
+            remote_config=remote_config,
+            project_name=project_name,
+            force=force_setup,
+            env_name=env_name,
+            python_version=python_version or "3.12",
+        )
 
-    if mode == "container":
-        cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {container_name} zsh"
-    elif mode == "ssh":
-        cmd = f"cd ~/projects/{project_name} && zsh"
-    elif mode == "conda":
-        cmd = f"cd ~/projects/{project_name} && export PATH=$HOME/miniconda3/bin:$PATH && source $HOME/miniconda3/etc/profile.d/conda.sh && conda activate {env_name} && zsh"
-
-    # Execute the SSH command with port forwarding for all modes
-    # Build SSH command with port forwarding
-    ssh_args = [
-        "ssh",
-        "-A",  # Forward SSH agent
-        "-o",
-        "ControlMaster=no",
-        "-o",
-        "ExitOnForwardFailure=no",
-        "-o",
-        "ServerAliveInterval=60",
-        "-o",
-        "ServerAliveCountMax=3",
-    ]
-
-    # Add port forwarding arguments
-    for port_mapping in forward_ports:
-        if port_mapping:
-            local_port, remote_port = port_mapping.split(":")
-            ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
-
-    # Add remaining SSH arguments
-    ssh_args.extend(["-t", f"{remote.username}@{remote.host}", cmd])
-
-    # Execute SSH command
-    os.execvp("ssh", ssh_args)  # noqa: S606
+    # Final stage: Connect via SSH
+    connect_ssh_session(
+        remote=remote,
+        project_name=project_name,
+        mode=mode,
+        container_name=container_name,
+        env_name=env_name,
+        forward_ports=forward_ports,
+    )
 
 
 @remote.command()

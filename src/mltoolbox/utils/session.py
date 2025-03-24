@@ -7,6 +7,12 @@ import paramiko
 
 class SSHSessionManager:
     _instance = None
+    _sessions = None
+    _locks = None
+    _last_used = None
+    _cleanup_thread = None
+    _cleanup_interval = None
+    _session_timeout = None
 
     def __new__(cls: "SSHSessionManager") -> "SSHSessionManager":
         if cls._instance is None:

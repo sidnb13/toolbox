@@ -8,7 +8,296 @@ from typing import Optional
 
 import click
 
+from mltoolbox.utils.docker import start_container as docker_start_container
+from mltoolbox.utils.stage_cache import SetupStage
+
 from .helpers import RemoteConfig, remote_cmd
+
+
+@SetupStage(name="zshrc_setup", description="Setting up zshrc configuration")
+def setup_zshrc_stage(remote_config: RemoteConfig, project_name: str):
+    """Set up basic zshrc configuration on remote host."""
+    setup_zshrc(remote_config)
+    return True
+
+
+@SetupStage(name="rclone_setup", description="Setting up rclone configuration")
+def setup_rclone_stage(remote_config: RemoteConfig, project_name: str):
+    """Set up rclone configuration on remote host."""
+    setup_rclone(remote_config)
+    return True
+
+
+@SetupStage(name="create_project_dirs", description="Creating project directories")
+def create_project_dirs_stage(remote_config: RemoteConfig, project_name: str):
+    """Create project directories on remote host."""
+    click.echo(f"📁 Creating remote project directories for {project_name}")
+    remote_cmd(
+        remote_config,
+        [f"mkdir -p ~/projects/{project_name}"],
+        use_working_dir=False,
+    )
+    return True
+
+
+@SetupStage(
+    name="docker_group_check",
+    description="Verifying Docker group membership",
+    cache_key_func=lambda kwargs: {"username": kwargs.get("username", "ubuntu")},
+)
+def check_docker_group_stage(
+    remote_config: RemoteConfig, project_name: str, username: str = "ubuntu"
+):
+    """Check if Docker is properly configured and user is in docker group."""
+    from mltoolbox.utils.docker import check_docker_group
+
+    result = check_docker_group(remote_config)
+    if result:
+        click.echo("✅ Docker group checked")
+    return result
+
+
+@SetupStage(
+    name="project_sync",
+    description="Syncing project files",
+    cache_key_func=lambda kwargs: {
+        "exclude": kwargs.get("exclude", ""),
+        "skip_sync": kwargs.get("skip_sync", False),
+    },
+)
+def sync_project_stage(
+    remote_config: RemoteConfig,
+    project_name: str,
+    exclude: str = "",
+    skip_sync: bool = False,
+):
+    """Sync project files to remote host."""
+    if skip_sync:
+        click.echo("Skipping project sync, continuing with SSH key sync...")
+        return True
+
+    sync_project(
+        remote_config,
+        project_name,
+        remote_path=project_name,
+        exclude=exclude,
+    )
+    return True
+
+
+@SetupStage(
+    name="env_file_update",
+    description="Updating environment configuration",
+    cache_key_func=lambda kwargs: {
+        "variant": kwargs.get("variant", "cuda"),
+        "env_variant": kwargs.get("env_variant", "default"),
+        "python_version": kwargs.get("python_version", None),
+    },
+)
+def update_env_file_stage(
+    remote_config: RemoteConfig,
+    project_name: str,
+    variant: str = "cuda",
+    env_variant: str = "default",
+    python_version: str = None,
+):
+    """Update environment file on remote host."""
+    # Set up environment updates
+    env_updates = {
+        "VARIANT": variant,
+        "ENV_VARIANT": env_variant,
+        "NVIDIA_DRIVER_CAPABILITIES": "all",
+        "NVIDIA_VISIBLE_DEVICES": "all",
+    }
+
+    # Add Python version to environment if specified
+    if python_version:
+        env_updates["PYTHON_VERSION"] = python_version
+        click.echo(f"🐍 Setting Python version to {python_version}")
+
+    click.echo(
+        f"🔧 Updating environment with variant '{variant}' and env-variant '{env_variant}'..."
+    )
+    update_env_file(remote_config, project_name, env_updates)
+    return True
+
+
+@SetupStage(
+    name="ssh_keys_setup",
+    description="Setting up SSH keys",
+    cache_key_func=lambda kwargs: {
+        "ssh_key_name": kwargs.get("ssh_key_name", "id_ed25519")
+    },
+)
+def setup_ssh_keys_stage(
+    remote_config: RemoteConfig, project_name: str, ssh_key_name: str = "id_ed25519"
+):
+    """Set up SSH keys on remote host."""
+    return setup_remote_ssh_keys(remote_config, ssh_key_name)
+
+
+@SetupStage(
+    name="container_start",
+    description="Starting container",
+    cache_key_func=lambda kwargs: {
+        "container_name": kwargs.get("container_name", ""),
+        "force_rebuild": kwargs.get("force_rebuild", False),
+        "host_ray_dashboard_port": kwargs.get("host_ray_dashboard_port", None),
+        "host_ray_client_port": kwargs.get("host_ray_client_port", None),
+        "variant": kwargs.get("variant", "cuda"),
+        "env_variant": kwargs.get("env_variant", "default"),
+        "python_version": kwargs.get("python_version", None),
+    },
+)
+def start_container_stage(
+    remote_config: RemoteConfig,
+    project_name: str,
+    container_name: str,
+    force_rebuild: bool = False,
+    host_ray_dashboard_port: str = None,
+    host_ray_client_port: str = None,
+    variant: str = "cuda",
+    env_variant: str = "default",
+    python_version: str = None,
+):
+    """Start the container on remote host."""
+    click.echo("🚀 Starting remote container...")
+    docker_start_container(
+        project_name,
+        container_name,
+        remote_config=remote_config,
+        build=force_rebuild,
+        host_ray_dashboard_port=host_ray_dashboard_port,
+        host_ray_client_port=host_ray_client_port,
+    )
+    return True
+
+
+@SetupStage(
+    name="conda_env_setup",
+    description="Setting up conda environment",
+    cache_key_func=lambda kwargs: {
+        "env_name": kwargs.get("env_name", "mltoolbox"),
+        "python_version": kwargs.get("python_version", "3.12"),
+    },
+)
+def setup_conda_env_stage(
+    remote_config: RemoteConfig,
+    project_name: str,
+    env_name: str = "mltoolbox",
+    python_version: str = "3.12",
+):
+    """Set up conda environment on remote host."""
+    click.echo("🔧 Setting up conda environment...")
+    setup_conda_env(remote_config, env_name, python_version)
+    return True
+
+
+def setup_ssh_config_stage(remote, project_name):
+    """Set up SSH configuration for the remote host."""
+    # create custom ssh config if not exists
+    ssh_config_path = Path("~/.config/mltoolbox/ssh/config").expanduser()
+    ssh_config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # add include directive to main ssh config if needed
+    main_ssh_config_path = Path("~/.ssh/config").expanduser()
+    include_line = f"Include {ssh_config_path}\n"
+
+    if not main_ssh_config_path.exists():
+        main_ssh_config_path.touch()
+
+    with main_ssh_config_path.open("r") as f:
+        content = f.read()
+
+    if include_line not in content:
+        with main_ssh_config_path.open("w") as f:
+            f.write(include_line + content)
+
+    # Read existing config and filter out previous entries for this host/alias
+    existing_config = []
+    current_host = None
+    skip_block = False
+
+    if ssh_config_path.exists():
+        with ssh_config_path.open("r") as f:
+            for line in f:
+                if line.startswith("Host "):
+                    current_host = line.split()[1].strip()
+                    # Skip this block if it matches our alias, regardless of host
+                    skip_block = current_host == remote.alias
+                if not skip_block:
+                    existing_config.append(line)
+                elif not line.strip() or line.startswith("Host "):
+                    skip_block = False
+
+    # Write updated config
+    with ssh_config_path.open("w") as f:
+        # Write existing entries (excluding the one we're updating)
+        f.writelines(existing_config)
+
+        # Add a newline if the file doesn't end with one
+        if existing_config and not existing_config[-1].endswith("\n"):
+            f.write("\n")
+
+        # Write the new/updated entry
+        f.write(f"Host {remote.alias}\n")
+        f.write(f"    HostName {remote.host}\n")
+        f.write(f"    User {remote.username}\n")
+        f.write("    ForwardAgent yes\n\n")
+
+    click.echo(f"Access your instance with `ssh {remote.alias}`")
+    return True
+
+
+def connect_ssh_session(
+    remote, project_name, mode, container_name, env_name, forward_ports
+):
+    """Connect to remote host via SSH with appropriate command.
+
+    Args:
+        remote: Remote database object
+        project_name: Project name
+        mode: Connection mode (ssh, container, conda)
+        container_name: Container name to use
+        env_name: Conda environment name
+        forward_ports: List of port forwarding specifications
+
+    Returns:
+        None (executes SSH command)
+    """
+    # Determine command based on mode
+    if mode == "container":
+        cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {container_name} zsh"
+    elif mode == "ssh":
+        cmd = f"cd ~/projects/{project_name} && zsh"
+    elif mode == "conda":
+        cmd = f"cd ~/projects/{project_name} && export PATH=$HOME/miniconda3/bin:$PATH && source $HOME/miniconda3/etc/profile.d/conda.sh && conda activate {env_name} && zsh"
+
+    # Build SSH command with port forwarding
+    ssh_args = [
+        "ssh",
+        "-A",  # Forward SSH agent
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ExitOnForwardFailure=no",
+        "-o",
+        "ServerAliveInterval=60",
+        "-o",
+        "ServerAliveCountMax=3",
+    ]
+
+    # Add port forwarding arguments
+    for port_mapping in forward_ports:
+        if port_mapping:
+            local_port, remote_port = port_mapping.split(":")
+            ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
+
+    # Add remaining SSH arguments
+    ssh_args.extend(["-t", f"{remote.username}@{remote.host}", cmd])
+
+    # Execute SSH command
+    os.execvp("ssh", ssh_args)  # noqa: S606
 
 
 def setup_zshrc(remote_config: RemoteConfig):
