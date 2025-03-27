@@ -1,3 +1,4 @@
+import json
 import os
 import re
 from pathlib import Path
@@ -10,6 +11,7 @@ from mltoolbox.utils.db import DB, Remote
 from mltoolbox.utils.docker import (
     RemoteConfig,
     check_docker_group,
+    find_available_port,
     start_container,
     verify_env_vars,
 )
@@ -18,7 +20,6 @@ from mltoolbox.utils.remote import (
     build_rclone_cmd,
     fetch_remote,
     run_rclone_sync,
-    setup_conda_env,
     setup_rclone,
     setup_remote_ssh_keys,
     setup_zshrc,
@@ -45,18 +46,10 @@ def provision():
 @click.argument("host_or_alias")
 @click.option("--username", default="ubuntu", help="Remote username")
 @click.option("--force-rebuild", is_flag=True, help="Force rebuild remote container")
-@click.option(
-    "--forward-ports",
-    "-p",
-    multiple=True,
-    default=["8000:8000", "8265:8265"],
-    help="Port forwarding in local:remote format",
-)
 def direct(
     host_or_alias,
     username,
     force_rebuild,
-    forward_ports,
 ):
     """Connect directly to remote container with zero setup."""
     # Validate host IP address format
@@ -65,8 +58,13 @@ def direct(
         remote = db.get_remote_fuzzy(host_or_alias)
         host = remote.host
         username = remote.username
+        # Get port mappings from database if available
+        project = remote.projects[0] if remote.projects else None
+        port_mappings_str = getattr(project, "port_mappings", None)
+        port_mappings = json.loads(port_mappings_str) if port_mappings_str else {}
     else:
         host = host_or_alias
+        port_mappings = {}
 
     # Get env variables for project and container names
     try:
@@ -81,6 +79,32 @@ def direct(
         username=username,
         working_dir=f"~/projects/{project_name}",
     )
+
+    # Generate dynamic ports if none are stored
+    if not port_mappings:
+        from mltoolbox.utils.docker import find_available_port
+
+        # Generate local ports dynamically
+        app_port = find_available_port(None, 8000)
+        ray_dashboard_port = find_available_port(None, 8265)
+        ray_client_port = find_available_port(None, 10001)
+
+        # Store the mapping in format {service_name: [local_port, remote_port]}
+        port_mappings = {
+            "app": [app_port, 8000],
+            "ray_dashboard": [ray_dashboard_port, 8265],
+            "ray_client": [ray_client_port, 10001],
+        }
+
+        # Store in database
+        db.upsert_remote(
+            username=username,
+            host=host,
+            project_name=project_name,
+            container_name=container_name,
+            port_mappings=port_mappings,
+        )
+
     # Just start the container
     start_container(
         project_name,
@@ -107,11 +131,36 @@ def direct(
         "ServerAliveCountMax=3",
     ]
 
+    # Print URL information to console
+    click.echo("\n===== Service URLs =====")
+
     # Add port forwarding arguments
-    for port_mapping in forward_ports:
-        if port_mapping:
-            local_port, remote_port = port_mapping.split(":")
+    for service, ports in port_mappings.items():
+        # Check if this is a list with local and remote ports
+        if isinstance(ports, list) and len(ports) == 2:
+            local_port, remote_port = ports
             ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
+
+            # Print URLs for common services
+            if service == "app":
+                click.echo(f"🌐 App URL: http://localhost:{local_port}")
+            elif service == "ray_dashboard":
+                click.echo(f"📊 Ray Dashboard: http://localhost:{local_port}")
+            elif service == "ray_client":
+                click.echo(f"🔌 Ray Client Port: {local_port}")
+        # For backward compatibility with old format
+        elif isinstance(ports, int):
+            # In old format, key is the service name, value is the port number (same for local and remote)
+            ssh_args.extend(["-L", f"{ports}:localhost:{ports}"])
+
+            if service == "app":
+                click.echo(f"🌐 App URL: http://localhost:{ports}")
+            elif service == "ray_dashboard":
+                click.echo(f"📊 Ray Dashboard: http://localhost:{ports}")
+            elif service == "ray_client":
+                click.echo(f"🔌 Ray Client Port: {ports}")
+
+    click.echo("=======================\n")
 
     # Add remaining SSH arguments
     ssh_args.extend(["-t", f"{username}@{host}", cmd])
@@ -124,21 +173,12 @@ def direct(
 @click.argument("host_or_alias")
 @click.option("--alias")
 @click.option("--username", default="ubuntu", help="Remote username")
-@click.option(
-    "--mode",
-    type=click.Choice(["ssh", "container", "conda"]),
-    default="ssh",
-    help="Connection mode",
-)
-@click.option(
-    "--env-name", default="mltoolbox", help="Conda environment name (for conda mode)"
-)
 @click.option("--force-rebuild", is_flag=True, help="force rebuild remote container")
 @click.option(
     "--forward-ports",
     "-p",
     multiple=True,
-    default=["8000:8000", "8265:8265"],
+    default=[],
     help="Port forwarding in local:remote format",
 )
 @click.option(
@@ -150,11 +190,6 @@ def direct(
     "--host-ray-client-port",
     default=None,
     help="Host port to map to Ray client server (container port remains 10001)",
-)
-@click.option(
-    "--wait/--no-wait",
-    default=False,
-    help="Wait for host to become available",
 )
 @click.option(
     "--timeout",
@@ -184,13 +219,10 @@ def connect(
     host_or_alias,
     alias,
     username,
-    mode,
-    env_name,
     force_rebuild,
     forward_ports,
     host_ray_dashboard_port,
     host_ray_client_port,
-    wait,
     timeout,
     exclude,
     skip_sync,
@@ -217,16 +249,13 @@ def connect(
         host=host,
         project_name=project_name,
         container_name=container_name,
-        conda_env=env_name if mode == "conda" else None,
         alias=alias,
     )
 
-    if wait:
-        click.echo(f"Waiting for host {remote.host} to become available...")
-        if not wait_for_host(remote.host, timeout):
-            raise click.ClickException(
-                f"Timeout waiting for host {remote.host} after {timeout} seconds"
-            )
+    if not wait_for_host(remote.host, timeout):
+        raise click.ClickException(
+            f"Timeout waiting for host {remote.host} after {timeout} seconds"
+        )
 
     remote_config = RemoteConfig(
         host=remote.host,
@@ -296,70 +325,113 @@ def connect(
         use_working_dir=False,
     )
 
-    if mode == "container":
-        check_docker_group(remote_config)
-        click.echo("✅ Docker group checked")
+    check_docker_group(remote_config)
+    click.echo("✅ Docker group checked")
 
-        # First ensure remote directory exists
-        remote_cmd(
+    # First ensure remote directory exists
+    remote_cmd(
+        remote_config,
+        [f"mkdir -p ~/projects/{project_name}"],
+        use_working_dir=False,
+    )
+
+    # Simple sync - no worktree detection or special handling
+    if not skip_sync:
+        sync_project(
             remote_config,
-            [f"mkdir -p ~/projects/{project_name}"],
-            use_working_dir=False,
+            project_name,
+            remote_path=project_name,
+            exclude=exclude,
         )
+    else:
+        click.echo("Skipping project sync, continuing with SSH key sync...")
 
-        # Simple sync - no worktree detection or special handling
-        if not skip_sync:
-            sync_project(
-                remote_config,
-                project_name,
-                remote_path=project_name,
-                exclude=exclude,
-            )
-        else:
-            click.echo("Skipping project sync, continuing with SSH key sync...")
+    # Set up environment first
+    env_updates = {
+        "VARIANT": variant,
+        "ENV_VARIANT": env_variant,
+        "NVIDIA_DRIVER_CAPABILITIES": "all",
+        "NVIDIA_VISIBLE_DEVICES": "all",
+    }
 
-        # Set up environment first
-        env_updates = {
-            "VARIANT": variant,
-            "ENV_VARIANT": env_variant,
-            "NVIDIA_DRIVER_CAPABILITIES": "all",
-            "NVIDIA_VISIBLE_DEVICES": "all",
+    # Add Python version to environment if specified
+    if python_version:
+        env_updates["PYTHON_VERSION"] = python_version
+        click.echo(f"🐍 Setting Python version to {python_version}")
+
+    click.echo(
+        f"🔧 Updating environment with variant '{variant}' and env-variant '{env_variant}'..."
+    )
+    update_env_file(remote_config, project_name, env_updates)
+
+    ssh_key_name = env_vars.get("SSH_KEY_NAME", "id_ed25519")
+    # Set up SSH keys on remote host
+    setup_remote_ssh_keys(remote_config, ssh_key_name)
+
+    port_mappings_str = (
+        getattr(remote.projects[0], "port_mappings", None) if remote.projects else None
+    )
+    port_mappings = json.loads(port_mappings_str) if port_mappings_str else {}
+
+    # Only allocate new ports if not already stored
+    if not port_mappings:
+        if not host_ray_dashboard_port:
+            host_ray_dashboard_port = find_available_port(None, 8265)
+        if not host_ray_client_port:
+            host_ray_client_port = find_available_port(None, 10001)
+        app_port = find_available_port(None, 8000)
+
+        port_mappings = {
+            "app": [app_port, 8000],
+            "ray_dashboard": [host_ray_dashboard_port, 8265],
+            "ray_client": [host_ray_client_port, 10001],
         }
 
-        # Add Python version to environment if specified
-        if python_version:
-            env_updates["PYTHON_VERSION"] = python_version
-            click.echo(f"🐍 Setting Python version to {python_version}")
-
-        click.echo(
-            f"🔧 Updating environment with variant '{variant}' and env-variant '{env_variant}'..."
+        # Store the new port mappings
+        db.upsert_remote(
+            username=username,
+            host=remote.host,
+            project_name=project_name,
+            container_name=container_name,
+            port_mappings=port_mappings,
         )
-        update_env_file(remote_config, project_name, env_updates)
+    else:
+        # Use existing ports from database
+        # Format conversion for backward compatibility
+        if "app" in port_mappings:
+            app_ports = port_mappings["app"]
+            if isinstance(app_ports, list) and len(app_ports) == 2:
+                app_port, _ = app_ports
+            else:
+                app_port = app_ports  # Old format
 
-        ssh_key_name = env_vars.get("SSH_KEY_NAME", "id_ed25519")
-        # Set up SSH keys on remote host
-        setup_remote_ssh_keys(remote_config, ssh_key_name)
+        if "ray_dashboard" in port_mappings:
+            dashboard_ports = port_mappings["ray_dashboard"]
+            if isinstance(dashboard_ports, list) and len(dashboard_ports) == 2:
+                host_ray_dashboard_port, _ = dashboard_ports
+            else:
+                host_ray_dashboard_port = dashboard_ports  # Old format
 
-        click.echo("🚀 Starting remote container...")
-        start_container(
-            project_name,
-            container_name,
-            remote_config=remote_config,
-            build=force_rebuild,
-            host_ray_dashboard_port=host_ray_dashboard_port,
-            host_ray_client_port=host_ray_client_port,
-        )
-    elif mode == "conda":
-        click.echo("🔧 Setting up conda environment...")
-        setup_conda_env(remote_config, env_name)
+        if "ray_client" in port_mappings:
+            client_ports = port_mappings["ray_client"]
+            if isinstance(client_ports, list) and len(client_ports) == 2:
+                host_ray_client_port, _ = client_ports
+            else:
+                host_ray_client_port = client_ports  # Old format
 
-    if mode == "container":
-        cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {container_name} zsh"
-    elif mode == "ssh":
-        cmd = f"cd ~/projects/{project_name} && zsh"
-    elif mode == "conda":
-        cmd = f"cd ~/projects/{project_name} && export PATH=$HOME/miniconda3/bin:$PATH && source $HOME/miniconda3/etc/profile.d/conda.sh && conda activate {env_name} && zsh"
+        click.echo("🔄 Using previously allocated ports from database")
 
+    click.echo("🚀 Starting remote container...")
+    start_container(
+        project_name,
+        container_name,
+        remote_config=remote_config,
+        build=force_rebuild,
+        host_ray_dashboard_port=host_ray_dashboard_port,
+        host_ray_client_port=host_ray_client_port,
+    )
+
+    cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {container_name} zsh"
     # Execute the SSH command with port forwarding for all modes
     # Build SSH command with port forwarding
     ssh_args = [
@@ -375,11 +447,49 @@ def connect(
         "ServerAliveCountMax=3",
     ]
 
-    # Add port forwarding arguments
+    # Print URL information to console
+    click.echo("\n===== Service URLs =====")
+
+    # Add dynamic port forwarding from database
+    port_mappings_str = (
+        getattr(remote.projects[0], "port_mappings", None) if remote.projects else None
+    )
+    port_mappings = json.loads(port_mappings_str) if port_mappings_str else {}
+
+    # Process stored port mappings
+    for service, ports in port_mappings.items():
+        # Check if this is a list with local and remote ports
+        if isinstance(ports, list) and len(ports) == 2:
+            local_port, remote_port = ports
+            ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
+
+            # Print URLs for common services
+            if service == "app":
+                click.echo(f"🌐 App URL: http://localhost:{local_port}")
+            elif service == "ray_dashboard":
+                click.echo(f"📊 Ray Dashboard: http://localhost:{local_port}")
+            elif service == "ray_client":
+                click.echo(f"🔌 Ray Client Port: {local_port}")
+        # For backward compatibility with old format
+        elif isinstance(ports, int):
+            # In old format, key is the service name, value is the port number (same for local and remote)
+            ssh_args.extend(["-L", f"{ports}:localhost:{ports}"])
+
+            if service == "app":
+                click.echo(f"🌐 App URL: http://localhost:{ports}")
+            elif service == "ray_dashboard":
+                click.echo(f"📊 Ray Dashboard: http://localhost:{ports}")
+            elif service == "ray_client":
+                click.echo(f"🔌 Ray Client Port: {ports}")
+
+    # Add additional user-specified port forwarding
     for port_mapping in forward_ports:
         if port_mapping:
             local_port, remote_port = port_mapping.split(":")
             ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
+            click.echo(f"🔌 Custom port: {local_port} -> {remote_port}")
+
+    click.echo("=======================\n")
 
     # Add remaining SSH arguments
     ssh_args.extend(["-t", f"{remote.username}@{remote.host}", cmd])
@@ -408,8 +518,6 @@ def list():  # noqa: A001
             if remote.projects:
                 click.echo("  Projects:")
                 for project in remote.projects:
-                    if project.conda_env:
-                        click.echo(f"  Conda env: {project.conda_env}")
                     click.echo(f"    - {project.name}")
                     click.echo(f"      Container: {project.container_name}")
 

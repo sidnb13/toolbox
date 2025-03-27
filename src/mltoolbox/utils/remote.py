@@ -235,66 +235,6 @@ def wait_for_host(host: str, timeout: int | None = None) -> bool:
     return False
 
 
-def setup_conda_env(
-    remote_config: RemoteConfig, env_name: str = None, python_version: str = "3.12"
-) -> None:
-    """Setup conda environment on remote host.
-
-    Args:
-        remote_config: Remote configuration containing username and host
-        env_name: Name of the conda environment to create
-        python_version: Python version to install (e.g. "3.12", "3.10")
-    """
-    project_root = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.strip()
-    project_name = Path(project_root).name
-
-    # Single command to handle everything
-    setup_command = f"""
-    # Download and install Miniconda if not present
-    if [ ! -f $HOME/miniconda3/bin/conda ]; then
-        wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-        bash Miniconda3-latest-Linux-x86_64.sh -b
-        rm Miniconda3-latest-Linux-x86_64.sh
-    fi
-
-    # Create the environment using absolute path
-    $HOME/miniconda3/bin/conda create -y -n {env_name} python={python_version}
-    """
-
-    try:
-        click.echo("Installing/updating conda and creating environment...")
-        result = subprocess.run(
-            ["ssh", f"{remote_config.username}@{remote_config.host}", setup_command],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        click.echo(result.stdout)
-    except subprocess.CalledProcessError as e:
-        click.echo("❌ Failed to setup conda environment")
-        if e.stdout:
-            click.echo(e.stdout)
-        if e.stderr:
-            click.echo(e.stderr)
-        raise
-
-    # Create remote directories
-    remote_cmd(
-        remote_config,
-        [f"mkdir -p ~/.config/{project_name} ~/projects/{project_name}"],
-        use_working_dir=False,
-    )
-
-    # Sync project files
-    click.echo("📦 Syncing project files...")
-    sync_project(remote_config, project_name)
-
-
 def sync_project(
     remote_config: RemoteConfig,
     project_name: str,

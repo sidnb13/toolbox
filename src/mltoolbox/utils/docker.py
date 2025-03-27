@@ -7,6 +7,7 @@ from typing import Optional
 
 import click
 
+from mltoolbox.utils.db import DB
 from mltoolbox.utils.remote import update_env_file
 
 from .helpers import RemoteConfig, remote_cmd
@@ -81,6 +82,28 @@ def check_docker_group(remote: RemoteConfig) -> None:
     except Exception as e:
         click.echo(f"❌ Docker configuration check failed: {e}")
         raise
+
+
+def find_available_port(remote_config: Optional[RemoteConfig], start_port: int) -> int:
+    """Find an available port starting from the given port."""
+    import socket
+
+    def is_port_in_use(port):
+        if remote_config:
+            # Check on remote host
+            cmd = f"nc -z 127.0.0.1 {port} && echo 'In use' || echo 'Available'"
+            result = remote_cmd(remote_config, [cmd], interactive=False)
+            return "In use" in result.stdout
+        else:
+            # Check locally
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                return s.connect_ex(("127.0.0.1", port)) == 0
+
+    port = start_port
+    while is_port_in_use(port):
+        port += 1
+
+    return port
 
 
 def verify_env_vars(remote: Optional[RemoteConfig] = None) -> dict:
@@ -175,6 +198,7 @@ def start_container(
     build=False,
     host_ray_dashboard_port=None,
     host_ray_client_port=None,
+    host_app_port=None,
 ) -> None:
     def cmd_wrap(cmd):
         if remote_config:
@@ -234,16 +258,36 @@ def start_container(
             )
             build = True
 
-    # Update the .env file with custom port mappings if specified
-    if host_ray_dashboard_port or host_ray_client_port:
-        env_updates = {}
-        if host_ray_dashboard_port:
-            env_updates["HOST_RAY_DASHBOARD_PORT"] = host_ray_dashboard_port
-        if host_ray_client_port:
-            env_updates["HOST_RAY_CLIENT_PORT"] = host_ray_client_port
+    if not host_ray_dashboard_port:
+        host_ray_dashboard_port = find_available_port(remote_config, 8265)
+    if not host_ray_client_port:
+        host_ray_client_port = find_available_port(remote_config, 10001)
+    if not host_app_port:
+        host_app_port = find_available_port(remote_config, 8000)
 
-        update_env_file(
-            remote_config, project_name, env_updates, container_name=container_name
+    env_updates = {
+        "HOST_RAY_DASHBOARD_PORT": host_ray_dashboard_port,
+        "HOST_RAY_CLIENT_PORT": host_ray_client_port,
+        "HOST_APP_PORT": host_app_port,
+    }
+
+    update_env_file(
+        remote_config, project_name, env_updates, container_name=container_name
+    )
+
+    # Store port mappings in database
+    if remote_config:
+        db = DB()
+        db.upsert_remote(
+            username=remote_config.username,
+            host=remote_config.host,
+            project_name=project_name,
+            container_name=container_name,
+            port_mappings={
+                "app": host_app_port,
+                "ray_dashboard": host_ray_dashboard_port,
+                "ray_client": host_ray_client_port,
+            },
         )
 
     # Define critical environment variables

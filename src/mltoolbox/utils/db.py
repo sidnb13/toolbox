@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from contextlib import contextmanager
 from datetime import datetime
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import (
+    JSON,
     Column,
     DateTime,
     ForeignKey,
@@ -39,6 +41,7 @@ class Project(Base):
         back_populates="projects",
     )
     conda_env: Mapped[str | None] = mapped_column(String, nullable=True)
+    port_mappings = mapped_column(JSON, nullable=True)
 
 
 # Association table for many-to-many relationship
@@ -107,6 +110,7 @@ class DB:
         container_name: str | None = None,
         conda_env: str | None = None,
         alias: str | None = None,
+        port_mappings: dict | None = None,
         *,
         update_timestamp: bool = True,
     ) -> Remote:
@@ -188,6 +192,9 @@ class DB:
 
             if project not in remote.projects:
                 remote.projects.append(project)
+
+            if port_mappings and project:
+                project.port_mappings = json.dumps(port_mappings)
 
             session.commit()
             session.refresh(remote)
