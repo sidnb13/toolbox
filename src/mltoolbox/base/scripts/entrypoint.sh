@@ -74,5 +74,16 @@ if [ -f /root/.zshrc ]; then
     echo "source /etc/profile.d/ssh-agent.sh" >>/root/.zshrc
 fi
 
+# Register with Ray cluster if RAY_HEAD_ADDRESS is set
+if [ ! -z "${RAY_HEAD_ADDRESS}" ]; then
+    # Check if the ray-init.sh script exists
+    if [ -f /usr/local/bin/ray-init.sh ]; then
+        echo "🌟 Registering with Ray cluster..."
+        /usr/local/bin/ray-init.sh &
+    else
+        echo "⚠️ Ray initialization script not found, skipping Ray registration"
+    fi
+fi
+
 # Execute the command passed to docker run
 exec "$@"

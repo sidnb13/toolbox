@@ -7,8 +7,81 @@ from pathlib import Path
 from typing import Optional
 
 import click
+import pkg_resources
 
 from .helpers import RemoteConfig, remote_cmd
+
+
+def ensure_ray_head_node(remote_config: Optional[RemoteConfig] = None):
+    """Ensure Ray head node is running on the remote host."""
+    if not remote_config:
+        return
+
+    # Check if Ray head is running (try to connect to port 6379)
+    result = remote_cmd(
+        remote_config,
+        ["nc -z localhost 6379 2>/dev/null || echo 'not_running'"],
+        capture_output=True,
+        use_working_dir=False,
+    )
+
+    if "not_running" in result:
+        click.echo("🚀 Starting Ray head node on remote host...")
+
+        # Copy the Ray head docker-compose file if not exists
+        ray_head_compose = Path(
+            pkg_resources.resource_filename(
+                "mltoolbox", "base/docker-compose-ray-head.yml"
+            )
+        )
+
+        # Create directory for compose file
+        remote_cmd(
+            remote_config,
+            ["mkdir -p ~/ray"],
+            use_working_dir=False,
+        )
+
+        # Copy file to remote
+        subprocess.run(
+            [
+                "scp",
+                str(ray_head_compose),
+                f"{remote_config.username}@{remote_config.host}:~/ray/docker-compose.yml",
+            ],
+            check=True,
+        )
+
+        # Start the Ray head node
+        remote_cmd(
+            remote_config,
+            [
+                "cd ~/ray && "
+                "GIT_NAME=${GIT_NAME} "
+                "PYTHON_VERSION=${PYTHON_VERSION:-3.12} "
+                "VARIANT=${VARIANT:-cuda} "
+                "docker compose up -d"
+            ],
+            use_working_dir=False,
+        )
+
+        # Wait for Ray to be ready
+        click.echo("⏳ Waiting for Ray head node to be ready...")
+        for _ in range(10):
+            time.sleep(2)
+            result = remote_cmd(
+                remote_config,
+                ["nc -z localhost 6379 2>/dev/null || echo 'not_running'"],
+                capture_output=True,
+                use_working_dir=False,
+            )
+            if "not_running" not in result:
+                click.echo("✅ Ray head node is ready")
+                break
+        else:
+            click.echo(
+                "⚠️ Ray head node not responding after timeout, continuing anyway"
+            )
 
 
 def setup_zshrc(remote_config: RemoteConfig):

@@ -107,6 +107,13 @@ def generate_project_files(
     project_entrypoint.write_bytes(base_entrypoint.read_bytes())
     project_entrypoint.chmod(0o755)  # Make executable
 
+    # Copy Ray init script if needed
+    if ray:
+        ray_init = render_template("ray-init.sh")
+        ray_init_path = project_dir / "scripts/ray-init.sh"
+        ray_init_path.write_text(ray_init)
+        ray_init_path.chmod(0o755)  # Make executable
+
     context = {
         "project_name": project_name.lower(),
         "ray": ray,

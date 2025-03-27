@@ -197,8 +197,6 @@ def start_container(
     remote_config: Optional[RemoteConfig] = None,
     build=False,
     host_ray_dashboard_port=None,
-    host_ray_client_port=None,
-    host_app_port=None,
 ) -> None:
     def cmd_wrap(cmd):
         if remote_config:
@@ -258,24 +256,20 @@ def start_container(
             )
             build = True
 
+    # Only need to worry about Ray dashboard port
     if not host_ray_dashboard_port:
         host_ray_dashboard_port = find_available_port(remote_config, 8265)
-    if not host_ray_client_port:
-        host_ray_client_port = find_available_port(remote_config, 10001)
-    if not host_app_port:
-        host_app_port = find_available_port(remote_config, 8000)
 
+    # Only update the Ray dashboard port in the env file
     env_updates = {
-        "HOST_RAY_DASHBOARD_PORT": host_ray_dashboard_port,
-        "HOST_RAY_CLIENT_PORT": host_ray_client_port,
-        "HOST_APP_PORT": host_app_port,
+        "RAY_DASHBOARD_PORT": host_ray_dashboard_port,
     }
 
     update_env_file(
         remote_config, project_name, env_updates, container_name=container_name
     )
 
-    # Store port mappings in database
+    # Store only dashboard port in database
     if remote_config:
         db = DB()
         db.upsert_remote(
@@ -284,9 +278,7 @@ def start_container(
             project_name=project_name,
             container_name=container_name,
             port_mappings={
-                "app": host_app_port,
                 "ray_dashboard": host_ray_dashboard_port,
-                "ray_client": host_ray_client_port,
             },
         )
 

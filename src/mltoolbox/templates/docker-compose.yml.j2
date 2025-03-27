@@ -16,6 +16,7 @@ services:
     container_name: ${CONTAINER_NAME}
     hostname: ${CONTAINER_NAME}
     working_dir: /workspace/${PROJECT_NAME}
+    network_mode: host  # Use host networking
     volumes:
       - .:/workspace/${PROJECT_NAME}
       - ~/.config/rclone:/root/.config/rclone
@@ -23,24 +24,10 @@ services:
       - type: bind
         source: ~/.ssh
         target: /root/.ssh
-    ports:
-      {% if ray %}
-      - "${RAY_DASHBOARD_PORT:-8265}:8265"
-      - "${RAY_CLIENT_SERVER_PORT:-10001}:10001"
-      {% endif %}
-      - "8000:8000"
-    {% if ray %}
-    command: >
-      zsh -c "
-      ray start --head \
-      --include-dashboard=true \
-      --dashboard-host=0.0.0.0 \
-      --dashboard-port=8265 \
-      --port=6379 \
-      --ray-client-server-port=10001 \
-      --node-ip-address=0.0.0.0 \
-      --block"
-    {% endif %}
+    environment:
+      - CONTAINER_ID=${CONTAINER_NAME}
+      - RAY_HEAD_ADDRESS=localhost:6379
+      # No need for port mapping with host networking
     deploy:
       resources:
         reservations:

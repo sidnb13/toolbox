@@ -18,6 +18,7 @@ from mltoolbox.utils.docker import (
 from mltoolbox.utils.helpers import remote_cmd
 from mltoolbox.utils.remote import (
     build_rclone_cmd,
+    ensure_ray_head_node,
     fetch_remote,
     run_rclone_sync,
     setup_rclone,
@@ -58,13 +59,14 @@ def direct(
         remote = db.get_remote_fuzzy(host_or_alias)
         host = remote.host
         username = remote.username
-        # Get port mappings from database if available
+        # Get Ray dashboard port from database if available
         project = remote.projects[0] if remote.projects else None
         port_mappings_str = getattr(project, "port_mappings", None)
         port_mappings = json.loads(port_mappings_str) if port_mappings_str else {}
+        ray_dashboard_port = port_mappings.get("ray_dashboard", 8265)
     else:
         host = host_or_alias
-        port_mappings = {}
+        ray_dashboard_port = find_available_port(None, 8265)
 
     # Get env variables for project and container names
     try:
@@ -80,44 +82,33 @@ def direct(
         working_dir=f"~/projects/{project_name}",
     )
 
-    # Generate dynamic ports if none are stored
-    if not port_mappings:
-        from mltoolbox.utils.docker import find_available_port
+    # Ensure Ray head node is running
+    from mltoolbox.utils.remote import ensure_ray_head_node
 
-        # Generate local ports dynamically
-        app_port = find_available_port(None, 8000)
-        ray_dashboard_port = find_available_port(None, 8265)
-        ray_client_port = find_available_port(None, 10001)
+    ensure_ray_head_node(remote_config)
 
-        # Store the mapping in format {service_name: [local_port, remote_port]}
-        port_mappings = {
-            "app": [app_port, 8000],
-            "ray_dashboard": [ray_dashboard_port, 8265],
-            "ray_client": [ray_client_port, 10001],
-        }
+    # Store only the Ray dashboard port in database
+    db.upsert_remote(
+        username=username,
+        host=host,
+        project_name=project_name,
+        container_name=container_name,
+        port_mappings={"ray_dashboard": ray_dashboard_port},
+    )
 
-        # Store in database
-        db.upsert_remote(
-            username=username,
-            host=host,
-            project_name=project_name,
-            container_name=container_name,
-            port_mappings=port_mappings,
-        )
-
-    # Just start the container
+    # Start the container with only Ray dashboard port
     start_container(
         project_name,
         container_name,
         remote_config=remote_config,
         build=force_rebuild,
+        host_ray_dashboard_port=ray_dashboard_port,
     )
 
-    # Connect to container - use full path to docker compose
-    # Use worktree_name for directory but container_name for the actual container
+    # Connect to container
     cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {container_name} zsh"
 
-    # Build SSH command with port forwarding
+    # Build SSH command with just Ray dashboard port forwarding
     ssh_args = [
         "ssh",
         "-A",  # Forward SSH agent
@@ -134,31 +125,9 @@ def direct(
     # Print URL information to console
     click.echo("\n===== Service URLs =====")
 
-    # Add port forwarding arguments
-    for service, ports in port_mappings.items():
-        # Check if this is a list with local and remote ports
-        if isinstance(ports, list) and len(ports) == 2:
-            local_port, remote_port = ports
-            ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
-
-            # Print URLs for common services
-            if service == "app":
-                click.echo(f"🌐 App URL: http://localhost:{local_port}")
-            elif service == "ray_dashboard":
-                click.echo(f"📊 Ray Dashboard: http://localhost:{local_port}")
-            elif service == "ray_client":
-                click.echo(f"🔌 Ray Client Port: {local_port}")
-        # For backward compatibility with old format
-        elif isinstance(ports, int):
-            # In old format, key is the service name, value is the port number (same for local and remote)
-            ssh_args.extend(["-L", f"{ports}:localhost:{ports}"])
-
-            if service == "app":
-                click.echo(f"🌐 App URL: http://localhost:{ports}")
-            elif service == "ray_dashboard":
-                click.echo(f"📊 Ray Dashboard: http://localhost:{ports}")
-            elif service == "ray_client":
-                click.echo(f"🔌 Ray Client Port: {ports}")
+    # Add Ray dashboard port forwarding
+    ssh_args.extend(["-L", f"{ray_dashboard_port}:localhost:8265"])
+    click.echo(f"📊 Ray Dashboard: http://localhost:{ray_dashboard_port}")
 
     click.echo("=======================\n")
 
@@ -185,11 +154,6 @@ def direct(
     "--host-ray-dashboard-port",
     default=None,
     help="Host port to map to Ray dashboard (container port remains 8265)",
-)
-@click.option(
-    "--host-ray-client-port",
-    default=None,
-    help="Host port to map to Ray client server (container port remains 10001)",
 )
 @click.option(
     "--timeout",
@@ -222,7 +186,6 @@ def connect(
     force_rebuild,
     forward_ports,
     host_ray_dashboard_port,
-    host_ray_client_port,
     timeout,
     exclude,
     skip_sync,
@@ -368,58 +331,37 @@ def connect(
     # Set up SSH keys on remote host
     setup_remote_ssh_keys(remote_config, ssh_key_name)
 
+    # Get existing Ray dashboard port if available
     port_mappings_str = (
         getattr(remote.projects[0], "port_mappings", None) if remote.projects else None
     )
     port_mappings = json.loads(port_mappings_str) if port_mappings_str else {}
 
-    # Only allocate new ports if not already stored
-    if not port_mappings:
-        if not host_ray_dashboard_port:
-            host_ray_dashboard_port = find_available_port(None, 8265)
-        if not host_ray_client_port:
-            host_ray_client_port = find_available_port(None, 10001)
-        app_port = find_available_port(None, 8000)
-
-        port_mappings = {
-            "app": [app_port, 8000],
-            "ray_dashboard": [host_ray_dashboard_port, 8265],
-            "ray_client": [host_ray_client_port, 10001],
-        }
-
-        # Store the new port mappings
-        db.upsert_remote(
-            username=username,
-            host=remote.host,
-            project_name=project_name,
-            container_name=container_name,
-            port_mappings=port_mappings,
-        )
+    # Extract Ray dashboard port if it exists
+    if port_mappings and "ray_dashboard" in port_mappings:
+        if isinstance(port_mappings["ray_dashboard"], list):
+            existing_dashboard_port = port_mappings["ray_dashboard"][0]
+        else:
+            existing_dashboard_port = port_mappings["ray_dashboard"]
     else:
-        # Use existing ports from database
-        # Format conversion for backward compatibility
-        if "app" in port_mappings:
-            app_ports = port_mappings["app"]
-            if isinstance(app_ports, list) and len(app_ports) == 2:
-                app_port, _ = app_ports
-            else:
-                app_port = app_ports  # Old format
+        existing_dashboard_port = None
 
-        if "ray_dashboard" in port_mappings:
-            dashboard_ports = port_mappings["ray_dashboard"]
-            if isinstance(dashboard_ports, list) and len(dashboard_ports) == 2:
-                host_ray_dashboard_port, _ = dashboard_ports
-            else:
-                host_ray_dashboard_port = dashboard_ports  # Old format
+    # Use provided dashboard port or existing or generate a new one
+    if not host_ray_dashboard_port:
+        host_ray_dashboard_port = existing_dashboard_port or find_available_port(
+            None, 8265
+        )
 
-        if "ray_client" in port_mappings:
-            client_ports = port_mappings["ray_client"]
-            if isinstance(client_ports, list) and len(client_ports) == 2:
-                host_ray_client_port, _ = client_ports
-            else:
-                host_ray_client_port = client_ports  # Old format
+    ensure_ray_head_node(remote_config)
 
-        click.echo("🔄 Using previously allocated ports from database")
+    # Store only the Ray dashboard port
+    db.upsert_remote(
+        username=username,
+        host=remote.host,
+        project_name=project_name,
+        container_name=container_name,
+        port_mappings={"ray_dashboard": host_ray_dashboard_port},
+    )
 
     click.echo("🚀 Starting remote container...")
     start_container(
@@ -428,12 +370,11 @@ def connect(
         remote_config=remote_config,
         build=force_rebuild,
         host_ray_dashboard_port=host_ray_dashboard_port,
-        host_ray_client_port=host_ray_client_port,
     )
 
     cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {container_name} zsh"
-    # Execute the SSH command with port forwarding for all modes
-    # Build SSH command with port forwarding
+
+    # Build SSH command with dashboard port forwarding
     ssh_args = [
         "ssh",
         "-A",  # Forward SSH agent
@@ -450,37 +391,9 @@ def connect(
     # Print URL information to console
     click.echo("\n===== Service URLs =====")
 
-    # Add dynamic port forwarding from database
-    port_mappings_str = (
-        getattr(remote.projects[0], "port_mappings", None) if remote.projects else None
-    )
-    port_mappings = json.loads(port_mappings_str) if port_mappings_str else {}
-
-    # Process stored port mappings
-    for service, ports in port_mappings.items():
-        # Check if this is a list with local and remote ports
-        if isinstance(ports, list) and len(ports) == 2:
-            local_port, remote_port = ports
-            ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
-
-            # Print URLs for common services
-            if service == "app":
-                click.echo(f"🌐 App URL: http://localhost:{local_port}")
-            elif service == "ray_dashboard":
-                click.echo(f"📊 Ray Dashboard: http://localhost:{local_port}")
-            elif service == "ray_client":
-                click.echo(f"🔌 Ray Client Port: {local_port}")
-        # For backward compatibility with old format
-        elif isinstance(ports, int):
-            # In old format, key is the service name, value is the port number (same for local and remote)
-            ssh_args.extend(["-L", f"{ports}:localhost:{ports}"])
-
-            if service == "app":
-                click.echo(f"🌐 App URL: http://localhost:{ports}")
-            elif service == "ray_dashboard":
-                click.echo(f"📊 Ray Dashboard: http://localhost:{ports}")
-            elif service == "ray_client":
-                click.echo(f"🔌 Ray Client Port: {ports}")
+    # Add Ray dashboard port forwarding
+    ssh_args.extend(["-L", f"{host_ray_dashboard_port}:localhost:8265"])
+    click.echo(f"📊 Ray Dashboard: http://localhost:{host_ray_dashboard_port}")
 
     # Add additional user-specified port forwarding
     for port_mapping in forward_ports:
