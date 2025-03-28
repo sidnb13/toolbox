@@ -7,8 +7,92 @@ from pathlib import Path
 from typing import Optional
 
 import click
+import pkg_resources
 
 from .helpers import RemoteConfig, remote_cmd
+
+
+def ensure_ray_head_node(remote_config: Optional[RemoteConfig] = None):
+    """Ensure Ray head node is running on the remote host.
+
+    Args:
+        remote_config: Remote configuration for connection
+        git_name: GitHub username for container image
+        python_version: Python version to use (e.g., "3.12")
+        variant: System variant to use (e.g., "cuda", "gh200")
+    """
+    if not remote_config:
+        return
+
+    # Check if Ray head is running (try to connect to port 6379)
+    result = remote_cmd(
+        remote_config,
+        ["nc -z localhost 6379 2>/dev/null || echo 'not_running'"],
+        use_working_dir=False,
+    )
+
+    if "not_running" in result.stdout:
+        click.echo("🚀 Starting Ray head node on remote host...")
+
+        # Get paths for Ray head files
+        ray_head_compose = Path(
+            pkg_resources.resource_filename(
+                "mltoolbox", "base/docker-compose-ray-head.yml"
+            )
+        )
+        ray_head_dockerfile = Path(
+            pkg_resources.resource_filename("mltoolbox", "base/Dockerfile.ray-head")
+        )
+
+        # Create directory for compose file
+        remote_cmd(
+            remote_config,
+            ["mkdir -p ~/ray"],
+            use_working_dir=False,
+        )
+
+        # Copy files to remote
+        subprocess.run(
+            [
+                "scp",
+                str(ray_head_compose),
+                f"{remote_config.username}@{remote_config.host}:~/ray/docker-compose.yml",
+            ],
+            check=True,
+        )
+
+        subprocess.run(
+            [
+                "scp",
+                str(ray_head_dockerfile),
+                f"{remote_config.username}@{remote_config.host}:~/ray/Dockerfile.ray-head",
+            ],
+            check=True,
+        )
+
+        # Start the Ray head node with docker compose
+        remote_cmd(
+            remote_config,
+            ["cd ~/ray && docker compose up -d"],
+            use_working_dir=False,
+        )
+
+        # Wait for Ray to be ready
+        click.echo("⏳ Waiting for Ray head node to be ready...")
+        for _ in range(10):
+            time.sleep(2)
+            result = remote_cmd(
+                remote_config,
+                ["nc -z localhost 6379 2>/dev/null || echo 'not_running'"],
+                use_working_dir=False,
+            )
+            if "not_running" not in result.stdout:
+                click.echo("✅ Ray head node is ready")
+                break
+        else:
+            click.echo(
+                "⚠️ Ray head node not responding after timeout, continuing anyway"
+            )
 
 
 def setup_zshrc(remote_config: RemoteConfig):

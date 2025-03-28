@@ -1,0 +1,34 @@
+services:
+  ray-head:
+    build:
+      context: .
+      dockerfile: Dockerfile.ray-head
+    container_name: ray-head
+    network_mode: host
+    command:
+      - ray
+      - start
+      - --head
+      - --include-dashboard=true
+      - --dashboard-host=0.0.0.0
+      - --dashboard-port=8265
+      - --port=6379
+      - --ray-client-server-port=10001
+      - --node-ip-address=0.0.0.0
+      - --num-cpus=0
+      - --num-gpus=0
+      - --block
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

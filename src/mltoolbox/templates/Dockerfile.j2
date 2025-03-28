@@ -32,13 +32,7 @@ COPY requirements*.txt ./
 RUN echo "Installing base requirements..." && \
     uv pip install --system --no-cache-dir -r requirements.txt
 
-# Install Ray requirements if available
-RUN if [ -f "requirements-ray.txt" ]; then \
-    echo "Installing Ray requirements..." && \
-    uv pip install --system --no-cache-dir -r requirements-ray.txt; \
-    else \
-    echo "No Ray requirements file found"; \
-    fi
+RUN uv pip install --system --no-cache-dir "ray[default]==2.44.0"
 
 # Install system variant specific requirements if available
 RUN if [ -f "requirements-${VARIANT}.txt" ]; then \
@@ -58,6 +52,9 @@ RUN if [ "${ENV_VARIANT}" != "default" ] && [ -f "requirements-${ENV_VARIANT}.tx
 
 # Always install ipdb for debugging (system-wide)
 RUN uv pip install --system --no-cache-dir ipdb
+
+COPY scripts/ray-init.sh /usr/local/bin/ray-init.sh
+RUN chmod +x /usr/local/bin/ray-init.sh
 
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

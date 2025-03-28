@@ -22,6 +22,7 @@ RUN apt-get update && \
     sudo \
     wget \
     nvtop \
+    netcat \
     nano \
     vim \
     zsh \

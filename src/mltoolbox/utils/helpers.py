@@ -49,7 +49,6 @@ def get_ssh_config(
 def remote_cmd(
     config: RemoteConfig,
     command: list[str],
-    interactive=False,
     use_working_dir=True,
     reload_session=False,
 ) -> subprocess.CompletedProcess:
