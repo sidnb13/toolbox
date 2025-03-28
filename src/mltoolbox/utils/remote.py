@@ -13,7 +13,14 @@ from .helpers import RemoteConfig, remote_cmd
 
 
 def ensure_ray_head_node(remote_config: Optional[RemoteConfig] = None):
-    """Ensure Ray head node is running on the remote host."""
+    """Ensure Ray head node is running on the remote host.
+
+    Args:
+        remote_config: Remote configuration for connection
+        git_name: GitHub username for container image
+        python_version: Python version to use (e.g., "3.12")
+        variant: System variant to use (e.g., "cuda", "gh200")
+    """
     if not remote_config:
         return
 
@@ -21,18 +28,20 @@ def ensure_ray_head_node(remote_config: Optional[RemoteConfig] = None):
     result = remote_cmd(
         remote_config,
         ["nc -z localhost 6379 2>/dev/null || echo 'not_running'"],
-        capture_output=True,
         use_working_dir=False,
     )
 
-    if "not_running" in result:
+    if "not_running" in result.stdout:
         click.echo("🚀 Starting Ray head node on remote host...")
 
-        # Copy the Ray head docker-compose file if not exists
+        # Get paths for Ray head files
         ray_head_compose = Path(
             pkg_resources.resource_filename(
                 "mltoolbox", "base/docker-compose-ray-head.yml"
             )
+        )
+        ray_head_dockerfile = Path(
+            pkg_resources.resource_filename("mltoolbox", "base/Dockerfile.ray-head")
         )
 
         # Create directory for compose file
@@ -42,7 +51,7 @@ def ensure_ray_head_node(remote_config: Optional[RemoteConfig] = None):
             use_working_dir=False,
         )
 
-        # Copy file to remote
+        # Copy files to remote
         subprocess.run(
             [
                 "scp",
@@ -52,16 +61,19 @@ def ensure_ray_head_node(remote_config: Optional[RemoteConfig] = None):
             check=True,
         )
 
-        # Start the Ray head node
+        subprocess.run(
+            [
+                "scp",
+                str(ray_head_dockerfile),
+                f"{remote_config.username}@{remote_config.host}:~/ray/Dockerfile.ray-head",
+            ],
+            check=True,
+        )
+
+        # Start the Ray head node with docker compose
         remote_cmd(
             remote_config,
-            [
-                "cd ~/ray && "
-                "GIT_NAME=${GIT_NAME} "
-                "PYTHON_VERSION=${PYTHON_VERSION:-3.12} "
-                "VARIANT=${VARIANT:-cuda} "
-                "docker compose up -d"
-            ],
+            ["cd ~/ray && docker compose up -d"],
             use_working_dir=False,
         )
 
@@ -72,10 +84,9 @@ def ensure_ray_head_node(remote_config: Optional[RemoteConfig] = None):
             result = remote_cmd(
                 remote_config,
                 ["nc -z localhost 6379 2>/dev/null || echo 'not_running'"],
-                capture_output=True,
                 use_working_dir=False,
             )
-            if "not_running" not in result:
+            if "not_running" not in result.stdout:
                 click.echo("✅ Ray head node is ready")
                 break
         else:

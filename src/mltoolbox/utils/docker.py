@@ -1,6 +1,7 @@
 from __future__ import annotations  # noqa: INP001
 
 import os
+from re import A
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -17,12 +18,12 @@ def check_docker_group(remote: RemoteConfig) -> None:
     """Check if Docker is properly configured and user is in docker group."""
     try:
         # Check if user is in docker group
-        result = remote_cmd(remote, ["groups"], interactive=False)
+        result = remote_cmd(remote, ["groups"])
         needs_group_setup = "docker" not in result.stdout
 
         # Check if we can use docker without sudo
         try:
-            remote_cmd(remote, ["docker ps -q"], interactive=False)
+            remote_cmd(remote, ["docker ps -q"])
             docker_working = True
         except Exception:
             docker_working = False
@@ -31,23 +32,19 @@ def check_docker_group(remote: RemoteConfig) -> None:
             click.echo("🔧 Setting up Docker permissions...")
 
             # Add docker group if needed
-            remote_cmd(remote, ["sudo groupadd -f docker"], interactive=True)
+            remote_cmd(remote, ["sudo groupadd -f docker"])
 
             # Add current user to docker group
-            remote_cmd(remote, ["sudo usermod -aG docker $USER"], interactive=True)
+            remote_cmd(remote, ["sudo usermod -aG docker $USER"])
 
             # Fix docker socket permissions
-            remote_cmd(
-                remote, ["sudo chmod 666 /var/run/docker.sock"], interactive=True
-            )
+            remote_cmd(remote, ["sudo chmod 666 /var/run/docker.sock"])
 
             click.echo("✅ Docker permissions set up successfully")
 
             # Verify docker now works without sudo
             try:
-                remote_cmd(
-                    remote, ["docker ps -q"], interactive=False, reload_session=True
-                )
+                remote_cmd(remote, ["docker ps -q"], reload_session=True)
                 click.echo("✅ Docker now works without sudo")
             except Exception:
                 click.echo("⚠️ Docker still requires sudo - continuing with sudo")
@@ -60,10 +57,37 @@ def check_docker_group(remote: RemoteConfig) -> None:
                 'grep -q \'"native.cgroupdriver":"cgroupfs"\' /etc/docker/daemon.json; then '
                 "echo 'configured'; else echo 'needs_config'; fi"
             ],
-            interactive=False,
         )
 
         if "needs_config" in result.stdout:
+            # Check for running containers before modifying daemon config
+            running_containers = remote_cmd(
+                remote, ["docker ps --format '{{.Names}}' | wc -l"]
+            ).stdout.strip()
+
+            if int(running_containers) > 0:
+                # List running containers
+                containers = remote_cmd(
+                    remote, ["docker ps --format '{{.Names}}'"]
+                ).stdout.strip()
+
+                click.echo(
+                    f"⚠️ WARNING: {running_containers} containers currently running:"
+                )
+                click.echo(containers)
+                click.echo(
+                    "⚠️ Changing Docker daemon configuration will restart Docker and KILL all running containers!"
+                )
+
+                if not click.confirm(
+                    "Do you want to continue and modify Docker configuration?",
+                    default=False,
+                ):
+                    click.echo(
+                        "❌ Docker configuration skipped. Some features may not work correctly."
+                    )
+                    return
+
             click.echo("🔧 Configuring Docker cgroup driver...")
             remote_cmd(
                 remote,
@@ -72,7 +96,6 @@ def check_docker_group(remote: RemoteConfig) -> None:
                     'echo \'{"exec-opts": ["native.cgroupdriver=cgroupfs"]}\' | sudo tee /etc/docker/daemon.json && '
                     "sudo systemctl restart docker"
                 ],
-                interactive=True,
             )
             click.echo("✅ Docker cgroup driver configured")
 
@@ -200,7 +223,7 @@ def start_container(
 ) -> None:
     def cmd_wrap(cmd):
         if remote_config:
-            return remote_cmd(remote_config, cmd, interactive=True)
+            return remote_cmd(remote_config, cmd)
         else:
             return subprocess.run(
                 cmd,
@@ -212,7 +235,7 @@ def start_container(
 
     def cmd_output(cmd):
         if remote_config:
-            return remote_cmd(remote_config, cmd, interactive=False)
+            return remote_cmd(remote_config, cmd)
         else:
             return subprocess.run(
                 cmd,
@@ -286,6 +309,7 @@ def start_container(
     critical_env = {
         "PROJECT_NAME": project_name,
         "CONTAINER_NAME": container_name,
+        "RAY_HEAD_ADDRESS": "localhost:6379",
     }
 
     # Start in detached mode with explicit env vars

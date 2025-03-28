@@ -267,6 +267,25 @@ class DB:
 
         return True
 
+    def get_port_mappings(self, remote_id, project_name=None):
+        """Get port mappings for a remote/project combination."""
+        with Session(self.engine) as session:
+            query = (
+                session.query(Project)
+                .join(remote_projects)
+                .join(Remote)
+                .filter(Remote.id == remote_id)
+            )
+
+            if project_name:
+                query = query.filter(Project.name == project_name)
+
+            project = query.first()
+
+            if project and project.port_mappings:
+                return json.loads(project.port_mappings)
+            return {}
+
     def get_remote_fuzzy(self, query: str) -> Optional[Remote]:
         with Session(self.engine) as session:
             # Search in both alias and host fields

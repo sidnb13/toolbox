@@ -21,6 +21,7 @@ services:
       - .:/workspace/${PROJECT_NAME}
       - ~/.config/rclone:/root/.config/rclone
       - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/ray_lockfiles:/root/ray_lockfiles
       - type: bind
         source: ~/.ssh
         target: /root/.ssh

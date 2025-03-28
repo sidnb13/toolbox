@@ -32,7 +32,7 @@ COPY requirements*.txt ./
 RUN echo "Installing base requirements..." && \
     uv pip install --system --no-cache-dir -r requirements.txt
 
-RUN uv pip install --system --no-cache-dir "ray[default]"
+RUN uv pip install --system --no-cache-dir "ray[default]==2.44.0"
 
 # Install system variant specific requirements if available
 RUN if [ -f "requirements-${VARIANT}.txt" ]; then \

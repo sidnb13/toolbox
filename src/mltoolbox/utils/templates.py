@@ -109,10 +109,12 @@ def generate_project_files(
 
     # Copy Ray init script if needed
     if ray:
-        ray_init = render_template("ray-init.sh")
-        ray_init_path = project_dir / "scripts/ray-init.sh"
-        ray_init_path.write_text(ray_init)
-        ray_init_path.chmod(0o755)  # Make executable
+        base_ray_init = Path(
+            pkg_resources.resource_filename("mltoolbox", "base/scripts/ray-init.sh")
+        )
+        project_ray_init = project_dir / "scripts/ray-init.sh"
+        project_ray_init.write_bytes(base_ray_init.read_bytes())
+        project_ray_init.chmod(0o755)  # Make executable
 
     context = {
         "project_name": project_name.lower(),

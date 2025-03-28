@@ -45,101 +45,6 @@ def provision():
 
 @remote.command()
 @click.argument("host_or_alias")
-@click.option("--username", default="ubuntu", help="Remote username")
-@click.option("--force-rebuild", is_flag=True, help="Force rebuild remote container")
-def direct(
-    host_or_alias,
-    username,
-    force_rebuild,
-):
-    """Connect directly to remote container with zero setup."""
-    # Validate host IP address format
-    ip_pattern = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
-    if not re.match(ip_pattern, host_or_alias):
-        remote = db.get_remote_fuzzy(host_or_alias)
-        host = remote.host
-        username = remote.username
-        # Get Ray dashboard port from database if available
-        project = remote.projects[0] if remote.projects else None
-        port_mappings_str = getattr(project, "port_mappings", None)
-        port_mappings = json.loads(port_mappings_str) if port_mappings_str else {}
-        ray_dashboard_port = port_mappings.get("ray_dashboard", 8265)
-    else:
-        host = host_or_alias
-        ray_dashboard_port = find_available_port(None, 8265)
-
-    # Get env variables for project and container names
-    try:
-        env_vars = verify_env_vars()
-        project_name = env_vars.get("PROJECT_NAME", Path.cwd().name)
-        container_name = env_vars.get("CONTAINER_NAME", project_name.lower())
-    except Exception:
-        raise click.ClickException("Failed to get env variables")
-
-    remote_config = RemoteConfig(
-        host=host,
-        username=username,
-        working_dir=f"~/projects/{project_name}",
-    )
-
-    # Ensure Ray head node is running
-    from mltoolbox.utils.remote import ensure_ray_head_node
-
-    ensure_ray_head_node(remote_config)
-
-    # Store only the Ray dashboard port in database
-    db.upsert_remote(
-        username=username,
-        host=host,
-        project_name=project_name,
-        container_name=container_name,
-        port_mappings={"ray_dashboard": ray_dashboard_port},
-    )
-
-    # Start the container with only Ray dashboard port
-    start_container(
-        project_name,
-        container_name,
-        remote_config=remote_config,
-        build=force_rebuild,
-        host_ray_dashboard_port=ray_dashboard_port,
-    )
-
-    # Connect to container
-    cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {container_name} zsh"
-
-    # Build SSH command with just Ray dashboard port forwarding
-    ssh_args = [
-        "ssh",
-        "-A",  # Forward SSH agent
-        "-o",
-        "ControlMaster=no",
-        "-o",
-        "ExitOnForwardFailure=no",
-        "-o",
-        "ServerAliveInterval=60",
-        "-o",
-        "ServerAliveCountMax=3",
-    ]
-
-    # Print URL information to console
-    click.echo("\n===== Service URLs =====")
-
-    # Add Ray dashboard port forwarding
-    ssh_args.extend(["-L", f"{ray_dashboard_port}:localhost:8265"])
-    click.echo(f"📊 Ray Dashboard: http://localhost:{ray_dashboard_port}")
-
-    click.echo("=======================\n")
-
-    # Add remaining SSH arguments
-    ssh_args.extend(["-t", f"{username}@{host}", cmd])
-
-    # Execute SSH command
-    os.execvp("ssh", ssh_args)  # noqa: S606
-
-
-@remote.command()
-@click.argument("host_or_alias")
 @click.option("--alias")
 @click.option("--username", default="ubuntu", help="Remote username")
 @click.option("--force-rebuild", is_flag=True, help="force rebuild remote container")
@@ -332,17 +237,16 @@ def connect(
     setup_remote_ssh_keys(remote_config, ssh_key_name)
 
     # Get existing Ray dashboard port if available
-    port_mappings_str = (
-        getattr(remote.projects[0], "port_mappings", None) if remote.projects else None
-    )
-    port_mappings = json.loads(port_mappings_str) if port_mappings_str else {}
+    project_name = os.getenv("PROJECT_NAME", Path.cwd().name)
+    port_mappings = db.get_port_mappings(remote.id, project_name)
 
     # Extract Ray dashboard port if it exists
     if port_mappings and "ray_dashboard" in port_mappings:
-        if isinstance(port_mappings["ray_dashboard"], list):
-            existing_dashboard_port = port_mappings["ray_dashboard"][0]
+        ray_dashboard_value = port_mappings["ray_dashboard"]
+        if isinstance(ray_dashboard_value, list):
+            existing_dashboard_port = ray_dashboard_value[0]
         else:
-            existing_dashboard_port = port_mappings["ray_dashboard"]
+            existing_dashboard_port = ray_dashboard_value
     else:
         existing_dashboard_port = None
 
@@ -352,6 +256,7 @@ def connect(
             None, 8265
         )
 
+    # Ensure Ray head node is running with explicit parameters
     ensure_ray_head_node(remote_config)
 
     # Store only the Ray dashboard port
@@ -412,7 +317,7 @@ def connect(
 
 
 @remote.command()
-def list():  # noqa: A001
+def list_remotes():  # noqa: A001
     """List remotes and their associated projects."""
     with db.get_session() as session:
         remotes = session.query(Remote).options(joinedload(Remote.projects)).all()
