@@ -141,86 +141,47 @@ def setup_rclone(remote_config: RemoteConfig) -> None:
 
 
 def update_env_file(
-    remote_config: RemoteConfig,
+    remote_config: Optional[RemoteConfig],
     project_name: str,
     updates: dict,
-    container_name: str = None,
 ):
-    """Update environment file with new values, preserving existing variables.
-
-    Args:
-        remote_config: Remote configuration
-        project_name: Project name for the remote directory path
-        updates: Dictionary of environment variables to update
-        container_name: Optional container name, defaults to project_name if not provided
-    """
-    # Use container_name if provided, otherwise default to project_name
-    container_name = (container_name or project_name).lower()
-
-    # Read current env file content
+    """Update environment file with new values, preserving existing variables."""
     try:
-        result = remote_cmd(
-            remote_config,
-            [f"cat ~/projects/{project_name}/.env 2>/dev/null || echo ''"],
-        )
-        # Get current env content from result
-        current_env = (
-            result.stdout if isinstance(result, subprocess.CompletedProcess) else result
-        )
+        # Get existing env vars (remote or local)
+        if remote_config:
+            env_cmd = f"cd ~/projects/{project_name} && cat .env 2>/dev/null || echo ''"
+            result = remote_cmd(remote_config, [env_cmd])
+            env_content = result.stdout
+        else:
+            env_file = Path.cwd() / ".env"
+            env_content = env_file.read_text() if env_file.exists() else ""
 
-        # Parse current env file
+        # Parse existing env vars
         env_dict = {}
-        for line in current_env.splitlines():
+        for line in env_content.splitlines():
             line = line.strip()
-            if line and not line.startswith("#"):
-                try:
-                    key, value = line.split("=", 1)
-                    env_dict[key.strip()] = value.strip()
-                except ValueError:
-                    continue  # Skip invalid lines
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                env_dict[key.strip()] = value.strip().strip("'\"")
 
-        # Update with new values
+        # Merge updates (updates take priority)
         env_dict.update(updates)
 
-        # Generate new env file content
-        new_env_content = "\n".join(f"{k}={v}" for k, v in env_dict.items())
+        # Format env vars back into a file
+        env_lines = [f"{key}={value}" for key, value in env_dict.items()]
+        updated_env = "\n".join(env_lines)
 
-        # Write back to remote .env file
-        remote_cmd(
-            remote_config,
-            [f"cd ~/projects/{project_name} && echo '{new_env_content}' > .env"],
-        )
+        # Write back
+        if remote_config:
+            write_cmd = f"cd ~/projects/{project_name} && cat > .env << 'EOF'\n{updated_env}\nEOF"
+            remote_cmd(remote_config, [write_cmd])
+        else:
+            env_file = Path.cwd() / ".env"
+            env_file.write_text(updated_env)
 
-        # Verify the env file has all required variables
-        click.echo("Verifying environment variables...")
-        required_vars = [
-            "PROJECT_NAME",
-            "CONTAINER_NAME",
-            "GIT_NAME",
-            "GIT_EMAIL",
-            "GITHUB_TOKEN",
-        ]
-        for var in required_vars:
-            if var not in env_dict:
-                click.echo(f"⚠️ Warning: {var} is missing from .env file")
+        click.echo(f"✅ Updated .env file with {len(updates)} variables")
 
-                # If PROJECT_NAME or CONTAINER_NAME is missing, add them
-                if var == "PROJECT_NAME":
-                    remote_cmd(
-                        remote_config,
-                        [
-                            f"cd ~/projects/{project_name} && echo 'PROJECT_NAME={project_name}' >> .env"
-                        ],
-                    )
-                    click.echo(f"✅ Added PROJECT_NAME={project_name} to .env file")
-                elif var == "CONTAINER_NAME":
-                    remote_cmd(
-                        remote_config,
-                        [
-                            f"cd ~/projects/{project_name} && echo 'CONTAINER_NAME={container_name}' >> .env"
-                        ],
-                    )
-                    click.echo(f"✅ Added CONTAINER_NAME={container_name} to .env file")
+        return env_dict
 
     except Exception as e:
         click.echo(f"❌ Failed to update .env file: {e}")
@@ -317,6 +278,56 @@ def wait_for_host(host: str, timeout: int | None = None) -> bool:
 
     click.echo(f"❌ Timeout reached after {timeout} seconds")
     return False
+
+
+def verify_env_vars(remote: Optional[RemoteConfig] = None) -> dict:
+    """Verify required environment variables and return all env vars as dict."""
+    required_vars = ["GIT_NAME", "GITHUB_TOKEN", "GIT_EMAIL"]
+    env_vars = {}
+
+    if remote:
+        # First get all env vars
+        result = remote_cmd(remote, ["test -f .env && cat .env || echo ''"])
+
+        # Parse env vars from the output
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                env_vars[key] = value.strip("'\"")
+
+        # Check if required vars exist
+        missing_vars = [var for var in required_vars if var not in env_vars]
+        if missing_vars:
+            raise click.ClickException(
+                f"Required environment variables not set on remote: {', '.join(missing_vars)}",
+            )
+    else:
+        # Local environment check
+        if not Path.cwd().joinpath(".env").exists():
+            raise click.ClickException("❌ .env file not found")
+
+        # Load env vars from the .env file
+        with open(Path.cwd().joinpath(".env"), "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    env_vars[key] = value.strip("'\"")
+
+        # Check also in current environment for required vars
+        for var in required_vars:
+            if var not in env_vars and os.getenv(var):
+                env_vars[var] = os.getenv(var)
+
+        # Check if required vars exist
+        missing_vars = [var for var in required_vars if var not in env_vars]
+        if missing_vars:
+            raise click.ClickException(
+                f"Required environment variables not set: {', '.join(missing_vars)}",
+            )
+
+    return env_vars
 
 
 def sync_project(

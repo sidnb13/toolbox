@@ -9,7 +9,7 @@ from typing import Optional
 import click
 
 from mltoolbox.utils.db import DB
-from mltoolbox.utils.remote import update_env_file
+from mltoolbox.utils.remote import update_env_file, verify_env_vars
 
 from .helpers import RemoteConfig, remote_cmd
 
@@ -129,58 +129,6 @@ def find_available_port(remote_config: Optional[RemoteConfig], start_port: int) 
     return port
 
 
-def verify_env_vars(remote: Optional[RemoteConfig] = None) -> dict:
-    """Verify required environment variables and return all env vars as dict."""
-    required_vars = ["GIT_NAME", "GITHUB_TOKEN", "GIT_EMAIL"]
-    env_vars = {}
-
-    if remote:
-        # First get all env vars
-        result = remote_cmd(
-            remote, ["test -f .env && cat .env || echo ''"], interactive=False
-        )
-
-        # Parse env vars from the output
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, value = line.split("=", 1)
-                env_vars[key] = value.strip("'\"")
-
-        # Check if required vars exist
-        missing_vars = [var for var in required_vars if var not in env_vars]
-        if missing_vars:
-            raise click.ClickException(
-                f"Required environment variables not set on remote: {', '.join(missing_vars)}",
-            )
-    else:
-        # Local environment check
-        if not Path.cwd().joinpath(".env").exists():
-            raise click.ClickException("❌ .env file not found")
-
-        # Load env vars from the .env file
-        with open(Path.cwd().joinpath(".env"), "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    env_vars[key] = value.strip("'\"")
-
-        # Check also in current environment for required vars
-        for var in required_vars:
-            if var not in env_vars and os.getenv(var):
-                env_vars[var] = os.getenv(var)
-
-        # Check if required vars exist
-        missing_vars = [var for var in required_vars if var not in env_vars]
-        if missing_vars:
-            raise click.ClickException(
-                f"Required environment variables not set: {', '.join(missing_vars)}",
-            )
-
-    return env_vars
-
-
 def get_image_digest(
     image: str,
     remote: bool = False,
@@ -220,6 +168,7 @@ def start_container(
     remote_config: Optional[RemoteConfig] = None,
     build=False,
     host_ray_dashboard_port=None,
+    branch_name: Optional[str] = None,
 ) -> None:
     def cmd_wrap(cmd):
         if remote_config:
@@ -288,9 +237,7 @@ def start_container(
         "RAY_DASHBOARD_PORT": host_ray_dashboard_port,
     }
 
-    update_env_file(
-        remote_config, project_name, env_updates, container_name=container_name
-    )
+    env_vars = update_env_file(remote_config, project_name, env_updates)
 
     # Store only dashboard port in database
     if remote_config:
@@ -305,35 +252,29 @@ def start_container(
             },
         )
 
-    # Define critical environment variables
-    critical_env = {
-        "PROJECT_NAME": project_name,
-        "CONTAINER_NAME": container_name,
-        "RAY_HEAD_ADDRESS": "localhost:6379",
-    }
+    service_name = (
+        container_name.replace("-" + branch_name, "") if branch_name else container_name
+    )
 
     # Start in detached mode with explicit env vars
     if remote_config:
         # For remote, prepend env vars to the command
-        env_string = " ".join([f"{k}={v}" for k, v in critical_env.items()])
+        env_string = " ".join([f"{k}={v}" for k, v in env_vars.items()])
         base_cmd = f"{env_string} docker compose up -d"
         if build:
             base_cmd += " --build"
-        base_cmd += f" {container_name}"
+        base_cmd += f" {service_name}"
         cmd_wrap([base_cmd])
     else:
         # For local, use environment parameter
         base_cmd = ["docker", "compose", "up", "-d"]
         if build:
             base_cmd.append("--build")
-        base_cmd.append(container_name)
-
-        env = os.environ.copy()
-        env.update(critical_env)
+        base_cmd.append(service_name)
 
         subprocess.run(
             base_cmd,
-            env=env,
+            env=env_vars,
             stdout=None,
             stderr=None,
             text=True,

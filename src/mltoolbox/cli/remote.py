@@ -2,6 +2,7 @@ import json
 import os
 import re
 from pathlib import Path
+import subprocess
 
 import click
 from dotenv import load_dotenv
@@ -84,6 +85,11 @@ def provision():
     default=None,
     help="Python version to use (e.g., '3.10', '3.11')",
 )
+@click.option(
+    "--branch-name",
+    default=None,
+    help="Branch name to use (e.g., 'main', 'feature/new-feature')",
+)
 def connect(
     host_or_alias,
     alias,
@@ -97,6 +103,7 @@ def connect(
     variant,
     env_variant,
     python_version,
+    branch_name,
 ):
     """Connect to remote development environment."""
     # Validate host IP address format
@@ -109,7 +116,25 @@ def connect(
 
     env_vars = verify_env_vars()
     project_name = env_vars.get("PROJECT_NAME", Path.cwd().name)
+
+    # If project name from env doesn't match cwd, use cwd name to avoid conflicts
+    cwd_name = Path.cwd().name
+    if project_name != cwd_name:
+        project_name = cwd_name
+
     container_name = env_vars.get("CONTAINER_NAME", project_name.lower())
+
+    if not branch_name:
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            branch_name = result.stdout.strip()
+        except:
+            branch_name = None
 
     # Get or create/update remote and project
     remote = db.upsert_remote(
@@ -216,11 +241,18 @@ def connect(
 
     # Set up environment first
     env_updates = {
+        **env_vars,
         "VARIANT": variant,
         "ENV_VARIANT": env_variant,
         "NVIDIA_DRIVER_CAPABILITIES": "all",
         "NVIDIA_VISIBLE_DEVICES": "all",
+        "PROJECT_NAME": project_name,
     }
+
+    # Get current branch if not specified
+    if branch_name:
+        container_name = f"{container_name}-{branch_name}"
+        env_updates["CONTAINER_NAME"] = container_name
 
     # Add Python version to environment if specified
     if python_version:
@@ -230,14 +262,12 @@ def connect(
     click.echo(
         f"🔧 Updating environment with variant '{variant}' and env-variant '{env_variant}'..."
     )
-    update_env_file(remote_config, project_name, env_updates)
-
+    env_vars = update_env_file(remote_config, project_name, env_updates)
     ssh_key_name = env_vars.get("SSH_KEY_NAME", "id_ed25519")
     # Set up SSH keys on remote host
     setup_remote_ssh_keys(remote_config, ssh_key_name)
 
     # Get existing Ray dashboard port if available
-    project_name = os.getenv("PROJECT_NAME", Path.cwd().name)
     port_mappings = db.get_port_mappings(remote.id, project_name)
 
     # Extract Ray dashboard port if it exists
@@ -269,15 +299,17 @@ def connect(
     )
 
     click.echo("🚀 Starting remote container...")
+
     start_container(
         project_name,
         container_name,
         remote_config=remote_config,
         build=force_rebuild,
         host_ray_dashboard_port=host_ray_dashboard_port,
+        branch_name=branch_name,
     )
 
-    cmd = f"cd ~/projects/{project_name} && docker compose exec -it -w /workspace/{project_name} {container_name} zsh"
+    cmd = f"cd ~/projects/{project_name} && docker exec -it -w /workspace/{project_name} {container_name} zsh"
 
     # Build SSH command with dashboard port forwarding
     ssh_args = [

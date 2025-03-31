@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -125,6 +126,7 @@ def remote_cmd(
         error_str = "".join(error)
 
         if exit_code != 0:
+            stack_trace = "".join(traceback.format_stack())
             # Format error message
             error_sections = [
                 "🔴 Remote Command Failed",
@@ -144,6 +146,8 @@ def remote_cmd(
                 f"  Exit Code: {exit_code}",
                 f"  stderr: {error_str or 'None'}",
                 f"  stdout: {output_str or 'None'}",
+                "Stack Trace:",
+                f"{stack_trace}",
             ]
             raise click.ClickException("\n".join(error_sections))
 
