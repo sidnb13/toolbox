@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.ray-head
+      args:
+      - PYTHON_VERSION=${PYTHON_VERSION:-3.12}
     container_name: ray-head
     network_mode: host
     command:

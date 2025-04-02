@@ -1,27 +1,23 @@
-FROM ubuntu:22.04
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
 
 # Set noninteractive installation
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install basic dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    python3-venv \
     curl \
     netcat-openbsd \
     iproute2 \
+    sudo \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Ray
-RUN pip3 install --no-cache-dir "ray[default]==2.44.0"
+RUN pip install --no-cache-dir "ray[default]==2.44.0"
 
 # Setup working directory
 WORKDIR /ray
-
-# Set proper path
-ENV PATH="/usr/local/bin:${PATH}"
 
 # Expose Ray ports
 EXPOSE 6379 8265 10001

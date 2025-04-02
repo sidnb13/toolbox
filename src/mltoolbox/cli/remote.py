@@ -7,6 +7,7 @@ import subprocess
 import click
 from dotenv import load_dotenv
 from sqlalchemy.orm import joinedload
+from sympy import python
 
 from mltoolbox.utils.db import DB, Remote
 from mltoolbox.utils.docker import (
@@ -287,7 +288,7 @@ def connect(
         )
 
     # Ensure Ray head node is running with explicit parameters
-    ensure_ray_head_node(remote_config)
+    ensure_ray_head_node(remote_config, python_version)
 
     # Store only the Ray dashboard port
     db.upsert_remote(

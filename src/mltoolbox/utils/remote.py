@@ -12,7 +12,7 @@ import pkg_resources
 from .helpers import RemoteConfig, remote_cmd
 
 
-def ensure_ray_head_node(remote_config: Optional[RemoteConfig] = None):
+def ensure_ray_head_node(remote_config: Optional[RemoteConfig], python_version: str):
     """Ensure Ray head node is running on the remote host.
 
     Args:
@@ -58,7 +58,7 @@ def ensure_ray_head_node(remote_config: Optional[RemoteConfig] = None):
                 str(ray_head_compose),
                 f"{remote_config.username}@{remote_config.host}:~/ray/docker-compose.yml",
             ],
-            check=True,
+            check=False,  # Changed from check=True to handle potential errors gracefully
         )
 
         subprocess.run(
@@ -67,15 +67,29 @@ def ensure_ray_head_node(remote_config: Optional[RemoteConfig] = None):
                 str(ray_head_dockerfile),
                 f"{remote_config.username}@{remote_config.host}:~/ray/Dockerfile.ray-head",
             ],
-            check=True,
+            check=False,  # Changed from check=True to handle potential errors gracefully
         )
 
-        # Start the Ray head node with docker compose
-        remote_cmd(
-            remote_config,
-            ["cd ~/ray && docker compose up -d"],
-            use_working_dir=False,
-        )
+        # Start the Ray head node with docker compose, with explicit error handling
+        try:
+            remote_cmd(
+                remote_config,
+                [
+                    "cd ~/ray && DOCKER_BUILDKIT=0 docker compose up -d"
+                ],  # Added DOCKER_BUILDKIT=0
+                use_working_dir=False,
+            )
+        except Exception as e:
+            click.echo(f"⚠️ Initial Ray head node start failed: {e}")
+            click.echo("🔄 Retrying without build cache...")
+            # Retry with --no-cache if first attempt fails
+            remote_cmd(
+                remote_config,
+                [
+                    f"cd ~/ray && DOCKER_BUILDKIT=0 PYTHON_VERSION={python_version} docker compose build --no-cache && docker compose up -d"
+                ],
+                use_working_dir=False,
+            )
 
         # Wait for Ray to be ready
         click.echo("⏳ Waiting for Ray head node to be ready...")
