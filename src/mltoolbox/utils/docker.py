@@ -61,9 +61,12 @@ def check_docker_group(remote: RemoteConfig) -> None:
 
         if "needs_config" in result.stdout:
             # Check for running containers before modifying daemon config
-            running_containers = remote_cmd(
-                remote, ["docker ps --format '{{.Names}}' | wc -l"]
-            ).stdout.strip()
+            running_containers = (
+                remote_cmd(
+                    remote, ["docker ps --format '{{.Names}}' | wc -l"]
+                ).stdout.strip()
+                or 0
+            )
 
             if int(running_containers) > 0:
                 # List running containers
@@ -88,16 +91,16 @@ def check_docker_group(remote: RemoteConfig) -> None:
                     )
                     return
 
-            click.echo("🔧 Configuring Docker cgroup driver...")
-            remote_cmd(
-                remote,
-                [
-                    "sudo mkdir -p /etc/docker && "
-                    'echo \'{"exec-opts": ["native.cgroupdriver=cgroupfs"]}\' | sudo tee /etc/docker/daemon.json && '
-                    "sudo systemctl restart docker"
-                ],
-            )
-            click.echo("✅ Docker cgroup driver configured")
+                click.echo("🔧 Configuring Docker cgroup driver...")
+                remote_cmd(
+                    remote,
+                    [
+                        "sudo mkdir -p /etc/docker && "
+                        'echo \'{"exec-opts": ["native.cgroupdriver=cgroupfs"]}\' | sudo tee /etc/docker/daemon.json && '
+                        "sudo systemctl restart docker"
+                    ],
+                )
+                click.echo("✅ Docker cgroup driver configured")
 
         # Verify Docker is working
         click.echo("✅ Docker is properly configured")

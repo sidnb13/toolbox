@@ -1,13 +1,12 @@
 import json
 import os
 import re
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import click
 from dotenv import load_dotenv
 from sqlalchemy.orm import joinedload
-from sympy import python
 
 from mltoolbox.utils.db import DB, Remote
 from mltoolbox.utils.docker import (
