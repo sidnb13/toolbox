@@ -54,9 +54,3 @@ ray start --address=${RAY_CONNECT_ADDRESS} \
     --node-ip-address=localhost
 
 echo "🔗 Container ${CONTAINER_ID} registered with Ray cluster with ${NUM_GPUS} GPUs"
-
-# Register container in shared directory for distributed blocking approach
-SHARED_DIR=${SHARED_DIR:-"/shared"}
-mkdir -p ${SHARED_DIR}
-echo ${CONTAINER_ID} >> ${SHARED_DIR}/container_list.txt
-echo "📝 Registered container in ${SHARED_DIR}/container_list.txt for distributed scheduling"
