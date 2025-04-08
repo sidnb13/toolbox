@@ -90,6 +90,12 @@ def provision():
     default=None,
     help="Branch name to use (e.g., 'main', 'feature/new-feature')",
 )
+@click.option(
+    "--network-mode",
+    type=click.Choice(["host", "bridge", "none"]),
+    default=None,
+    help="Override network mode (default is 'host' from compose file)",
+)
 def connect(
     host_or_alias,
     alias,
@@ -104,6 +110,7 @@ def connect(
     env_variant,
     python_version,
     branch_name,
+    network_mode,
 ):
     """Connect to remote development environment."""
     # Validate host IP address format
@@ -307,6 +314,7 @@ def connect(
         build=force_rebuild,
         host_ray_dashboard_port=host_ray_dashboard_port,
         branch_name=branch_name,
+        network_mode=network_mode,
     )
 
     cmd = f"cd ~/projects/{project_name} && docker exec -it -w /workspace/{project_name} {container_name} zsh"

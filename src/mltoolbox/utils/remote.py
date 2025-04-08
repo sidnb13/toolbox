@@ -75,7 +75,7 @@ def ensure_ray_head_node(remote_config: Optional[RemoteConfig], python_version: 
             remote_cmd(
                 remote_config,
                 [
-                    "cd ~/ray && DOCKER_BUILDKIT=0 docker compose up -d"
+                    f"cd ~/ray && PYTHON_VERSION={python_version} DOCKER_BUILDKIT=0 docker compose up -d"
                 ],  # Added DOCKER_BUILDKIT=0
                 use_working_dir=False,
             )

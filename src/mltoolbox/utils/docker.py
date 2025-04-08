@@ -1,9 +1,9 @@
 from __future__ import annotations  # noqa: INP001
 
 import os
-from re import A
 import subprocess
 from pathlib import Path
+from re import A
 from typing import Optional
 
 import click
@@ -172,6 +172,7 @@ def start_container(
     build=False,
     host_ray_dashboard_port=None,
     branch_name: Optional[str] = None,
+    network_mode: Optional[str] = None,  # Add this parameter
 ) -> None:
     def cmd_wrap(cmd):
         if remote_config:
@@ -266,6 +267,10 @@ def start_container(
         base_cmd = f"{env_string} docker compose up -d"
         if build:
             base_cmd += " --build"
+
+        if network_mode:
+            base_cmd += f" --network {network_mode}"
+
         base_cmd += f" {service_name}"
         cmd_wrap([base_cmd])
     else:
@@ -274,6 +279,9 @@ def start_container(
         if build:
             base_cmd.append("--build")
         base_cmd.append(service_name)
+
+        if network_mode:
+            base_cmd.extend(["--network", network_mode])
 
         subprocess.run(
             base_cmd,
