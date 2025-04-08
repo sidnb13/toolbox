@@ -3,13 +3,6 @@
 
 set -e
 
-# Function to install dependencies
-install_deps() {
-    echo "Installing required Python packages..."
-    pip install openai python-dotenv
-}
-
-# Function to install the hook
 install_hook() {
     # Get the directory where this script is located
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,7 +31,7 @@ install_hook() {
 
     echo "#!/bin/sh" >"$HOOK_PATH"
     echo "# AI Commit Message Generator" >>"$HOOK_PATH"
-    echo "python3 \"$SCRIPT_DIR/ai_commit.py\" \"\$@\"" >>"$HOOK_PATH"
+    echo "python \"$SCRIPT_DIR/ai_commit.py\" \"\$@\"" >>"$HOOK_PATH"
 
     # Make it executable
     chmod +x "$HOOK_PATH"
@@ -57,9 +50,6 @@ install_hook() {
         echo "export OPENAI_API_KEY=your_key_here"
     fi
 }
-
-# Install dependencies
-install_deps
 
 # Install the hook
 install_hook
