@@ -5,8 +5,9 @@ A Git hook that uses OpenAI to generate commit messages based on your changes.
 """
 
 import os
-import sys
 import subprocess
+import sys
+
 import openai
 from dotenv import load_dotenv
 
@@ -79,7 +80,7 @@ def main():
         commit_msg_file = sys.argv[1]
 
         # Get the current commit message
-        with open(commit_msg_file, "r") as f:
+        with open(commit_msg_file) as f:
             current_msg = f.read().strip()
 
         # Skip if message is already provided or this is a merge commit
