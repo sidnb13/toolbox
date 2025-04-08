@@ -2,6 +2,12 @@
 
 Containerization and setup tools for bootstrapping my ML research projects.
 
+Install ai commit hook:
+
+```bash
+curl -s https://raw.githubusercontent.com/sidnb13/toolbox/refs/heads/master/utils/download.sh | bash
+```
+
 Backlog:
 
 - Skypilot integration to spin up instances from cli
