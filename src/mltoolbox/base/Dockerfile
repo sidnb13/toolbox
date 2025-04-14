@@ -1,6 +1,6 @@
 FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
 
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION
 
 # Combine environment variable settings
 ENV TZ=Etc/UTC \

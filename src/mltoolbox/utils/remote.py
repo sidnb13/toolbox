@@ -294,7 +294,7 @@ def wait_for_host(host: str, timeout: int | None = None) -> bool:
     return False
 
 
-def verify_env_vars(remote: Optional[RemoteConfig] = None) -> dict:
+def verify_env_vars(remote: Optional[RemoteConfig] = None) -> dict:  # noqa: FA100
     """Verify required environment variables and return all env vars as dict."""
     required_vars = ["GIT_NAME", "GITHUB_TOKEN", "GIT_EMAIL"]
     env_vars = {}
@@ -322,7 +322,7 @@ def verify_env_vars(remote: Optional[RemoteConfig] = None) -> dict:
             raise click.ClickException("❌ .env file not found")
 
         # Load env vars from the .env file
-        with open(Path.cwd().joinpath(".env"), "r") as f:
+        with open(Path.cwd().joinpath(".env")) as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:

@@ -6,12 +6,12 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        - PYTHON_VERSION=${PYTHON_VERSION:-{{ python_version }}}
-        - GIT_NAME=${GIT_NAME}
-        - GIT_EMAIL=${GIT_EMAIL}
-        - PROJECT_NAME=${PROJECT_NAME}
-        - VARIANT=${VARIANT:-{{ variant }}}
-        - ENV_VARIANT=${ENV_VARIANT:-{{ env_variant }}}
+        PYTHON_VERSION: ${PYTHON_VERSION}
+        GIT_NAME: ${GIT_NAME}
+        GIT_EMAIL: ${GIT_EMAIL}
+        PROJECT_NAME: ${PROJECT_NAME}
+        VARIANT: ${VARIANT}
+        ENV_VARIANT: ${ENV_VARIANT}
     image: ${CONTAINER_NAME}:${VARIANT}-${ENV_VARIANT}
     container_name: ${CONTAINER_NAME}
     hostname: ${CONTAINER_NAME}

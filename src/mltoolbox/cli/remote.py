@@ -1,4 +1,3 @@
-import json
 import os
 import re
 import subprocess
@@ -14,7 +13,6 @@ from mltoolbox.utils.docker import (
     check_docker_group,
     find_available_port,
     start_container,
-    verify_env_vars,
 )
 from mltoolbox.utils.helpers import remote_cmd
 from mltoolbox.utils.remote import (
@@ -27,6 +25,7 @@ from mltoolbox.utils.remote import (
     setup_zshrc,
     sync_project,
     update_env_file,
+    verify_env_vars,
     wait_for_host,
 )
 

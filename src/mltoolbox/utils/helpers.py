@@ -20,7 +20,8 @@ class RemoteConfig:
 
 
 def get_ssh_config(
-    alias: str, config_path: Path = "~/.config/mltoolbox/ssh/config"
+    alias: str,
+    config_path: Path = "~/.config/mltoolbox/ssh/config",
 ) -> dict:
     """Parse SSH config and return settings for the given alias."""
     ssh_config = paramiko.config.SSHConfig()
@@ -54,7 +55,6 @@ def remote_cmd(
     reload_session=False,
 ) -> subprocess.CompletedProcess:
     """Execute command on remote host using paramiko SSH."""
-
     # Parse SSH config if the host looks like an alias
     ssh_config = get_ssh_config(config.host)
     actual_hostname = ssh_config.get("hostname", config.host)
@@ -78,7 +78,9 @@ def remote_cmd(
             ssh = session_manager.reload_session(actual_hostname, actual_username)
         else:
             ssh = session_manager.get_session(
-                actual_hostname, actual_username, **connect_kwargs
+                actual_hostname,
+                actual_username,
+                **connect_kwargs,
             )
 
         _, stdout, _ = ssh.exec_command("pwd")
@@ -160,7 +162,7 @@ def remote_cmd(
         )
 
     except paramiko.SSHException as e:
-        click.echo(f"❌ SSH connection failed: {str(e)}")
+        click.echo(f"❌ SSH connection failed: {e!s}")
         raise
     except Exception as e:
         raise click.ClickException(f"Command failed: {e!s}")

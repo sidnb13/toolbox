@@ -2,14 +2,11 @@ from __future__ import annotations  # noqa: INP001
 
 import os
 import subprocess
-from pathlib import Path
-from re import A
-from typing import Optional
 
 import click
 
 from mltoolbox.utils.db import DB
-from mltoolbox.utils.remote import update_env_file, verify_env_vars
+from mltoolbox.utils.remote import update_env_file
 
 from .helpers import RemoteConfig, remote_cmd
 
@@ -25,7 +22,7 @@ def check_docker_group(remote: RemoteConfig) -> None:
         try:
             remote_cmd(remote, ["docker ps -q"])
             docker_working = True
-        except Exception:
+        except click.exceptions.ClickException:
             docker_working = False
 
         if needs_group_setup or not docker_working:
@@ -46,7 +43,7 @@ def check_docker_group(remote: RemoteConfig) -> None:
             try:
                 remote_cmd(remote, ["docker ps -q"], reload_session=True)
                 click.echo("✅ Docker now works without sudo")
-            except Exception:
+            except subprocess.CalledProcessError:
                 click.echo("⚠️ Docker still requires sudo - continuing with sudo")
 
         # Check if docker daemon uses the right cgroup driver
@@ -55,7 +52,7 @@ def check_docker_group(remote: RemoteConfig) -> None:
             [
                 "if [ -f /etc/docker/daemon.json ] && "
                 'grep -q \'"native.cgroupdriver":"cgroupfs"\' /etc/docker/daemon.json; then '
-                "echo 'configured'; else echo 'needs_config'; fi"
+                "echo 'configured'; else echo 'needs_config'; fi",
             ],
         )
 
@@ -63,7 +60,8 @@ def check_docker_group(remote: RemoteConfig) -> None:
             # Check for running containers before modifying daemon config
             running_containers = (
                 remote_cmd(
-                    remote, ["docker ps --format '{{.Names}}' | wc -l"]
+                    remote,
+                    ["docker ps --format '{{.Names}}' | wc -l"],
                 ).stdout.strip()
                 or 0
             )
@@ -71,15 +69,16 @@ def check_docker_group(remote: RemoteConfig) -> None:
             if int(running_containers) > 0:
                 # List running containers
                 containers = remote_cmd(
-                    remote, ["docker ps --format '{{.Names}}'"]
+                    remote,
+                    ["docker ps --format '{{.Names}}'"],
                 ).stdout.strip()
 
                 click.echo(
-                    f"⚠️ WARNING: {running_containers} containers currently running:"
+                    f"⚠️ WARNING: {running_containers} containers currently running:",
                 )
                 click.echo(containers)
                 click.echo(
-                    "⚠️ Changing Docker daemon configuration will restart Docker and KILL all running containers!"
+                    "⚠️ Changing Docker daemon configuration will restart Docker and KILL all running containers!",
                 )
 
                 if not click.confirm(
@@ -87,7 +86,7 @@ def check_docker_group(remote: RemoteConfig) -> None:
                     default=False,
                 ):
                     click.echo(
-                        "❌ Docker configuration skipped. Some features may not work correctly."
+                        "❌ Docker configuration skipped. Some features may not work correctly.",
                     )
                     return
 
@@ -97,7 +96,7 @@ def check_docker_group(remote: RemoteConfig) -> None:
                     [
                         "sudo mkdir -p /etc/docker && "
                         'echo \'{"exec-opts": ["native.cgroupdriver=cgroupfs"]}\' | sudo tee /etc/docker/daemon.json && '
-                        "sudo systemctl restart docker"
+                        "sudo systemctl restart docker",
                     ],
                 )
                 click.echo("✅ Docker cgroup driver configured")
@@ -110,7 +109,7 @@ def check_docker_group(remote: RemoteConfig) -> None:
         raise
 
 
-def find_available_port(remote_config: Optional[RemoteConfig], start_port: int) -> int:
+def find_available_port(remote_config: RemoteConfig | None, start_port: int) -> int:
     """Find an available port starting from the given port."""
     import socket
 
@@ -118,12 +117,11 @@ def find_available_port(remote_config: Optional[RemoteConfig], start_port: int) 
         if remote_config:
             # Check on remote host
             cmd = f"nc -z 127.0.0.1 {port} && echo 'In use' || echo 'Available'"
-            result = remote_cmd(remote_config, [cmd], interactive=False)
+            result = remote_cmd(remote_config, [cmd])
             return "In use" in result.stdout
-        else:
-            # Check locally
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                return s.connect_ex(("127.0.0.1", port)) == 0
+        # Check locally
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            return s.connect_ex(("127.0.0.1", port)) == 0
 
     port = start_port
     while is_port_in_use(port):
@@ -135,7 +133,7 @@ def find_available_port(remote_config: Optional[RemoteConfig], start_port: int) 
 def get_image_digest(
     image: str,
     remote: bool = False,
-    remote_config: Optional[RemoteConfig] = None,
+    remote_config: RemoteConfig | None = None,
 ) -> str:
     def docker_cmd(cmd):
         return (
@@ -168,34 +166,32 @@ def get_image_digest(
 def start_container(
     project_name: str,
     container_name: str,
-    remote_config: Optional[RemoteConfig] = None,
+    remote_config: RemoteConfig | None = None,
     build=False,
     host_ray_dashboard_port=None,
-    branch_name: Optional[str] = None,
-    network_mode: Optional[str] = None,  # Add this parameter
+    branch_name: str | None = None,
+    network_mode: str | None = None,  # Add this parameter
 ) -> None:
     def cmd_wrap(cmd):
         if remote_config:
             return remote_cmd(remote_config, cmd)
-        else:
-            return subprocess.run(
-                cmd,
-                stdout=None,
-                stderr=None,
-                text=True,
-                check=False,
-            )
+        return subprocess.run(
+            cmd,
+            stdout=None,
+            stderr=None,
+            text=True,
+            check=False,
+        )
 
     def cmd_output(cmd):
         if remote_config:
             return remote_cmd(remote_config, cmd)
-        else:
-            return subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
     # Check container status to determine if we need to rebuild
     container_name = container_name.lower()
@@ -215,7 +211,7 @@ def start_container(
     if not build:
         if status_result.returncode != 0 or not status_result.stdout.strip():
             click.echo(
-                f"🔄 Container {container_name} not found. Will build from scratch."
+                f"🔄 Container {container_name} not found. Will build from scratch.",
             )
             build = True
         elif (
@@ -223,12 +219,12 @@ def start_container(
             or "unhealthy" in status_result.stdout.lower()
         ):
             click.echo(
-                f"🔄 Container {container_name} is in unhealthy state. Rebuilding..."
+                f"🔄 Container {container_name} is in unhealthy state. Rebuilding...",
             )
             build = True
         elif "Restarting" in status_result.stdout:
             click.echo(
-                f"🔄 Container {container_name} is in a restart loop. Rebuilding..."
+                f"🔄 Container {container_name} is in a restart loop. Rebuilding...",
             )
             build = True
 
