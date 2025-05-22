@@ -4,6 +4,8 @@ import re
 
 from .llm_backend_async import get_async_llm_backend
 
+COMMIT_MSG_WORD_LIMIT = int(os.getenv("AI_COMMIT_MSG_WORD_LIMIT", 10))
+
 
 def split_diff_by_file(diff):
     """Split a git diff into (filename, diff_for_file) tuples."""
@@ -36,7 +38,7 @@ def get_codebase_context():
     return context
 
 
-async def async_file_level_summary(diff_chunk, filename, llm, model):
+async def async_file_level_summary(diff_chunk, filename, llm, model=None):
     prompt = f"""
 You are an expert software engineer. For the following file ({filename}) git diff excerpt, summarize:
 - What was the main purpose or intent?
@@ -46,7 +48,7 @@ You are an expert software engineer. For the following file ({filename}) git dif
 DIFF:
 {diff_chunk}
 """
-    return await llm.complete(prompt, model)
+    return await llm.complete(prompt, model=model)
 
 
 async def async_reduce_summaries(file_summaries, codebase_context, llm, model):
@@ -58,7 +60,7 @@ You are an expert software developer writing git commit messages. The following 
 Project context:
 {codebase_context}
 
-Write a single, short (max 1 line, 30 words), human-like commit message that best describes the overall intent and effect of all these changes together. Use correct tense and summarize as if for your teammates.
+Write a single, short (max 1 line, {COMMIT_MSG_WORD_LIMIT} words), human-like commit message that best describes the overall intent and effect of all these changes together. Use correct tense and summarize as if for your teammates.
 """
     result = await llm.complete(prompt, model)
     return result
@@ -78,7 +80,7 @@ async def async_map_reduce_summarize(diff, codebase_context=None):
     tasks = []
     for fname, filediff in files:
         truncated = filediff[:3000] + ("..." if len(filediff) > 3000 else "")
-        tasks.append(async_file_level_summary(truncated, fname, llm, model))
+        tasks.append(async_file_level_summary(truncated, fname, llm, model=model))
     # Execute all map tasks in parallel
     file_results = await asyncio.gather(*tasks, return_exceptions=True)
     file_summaries = []

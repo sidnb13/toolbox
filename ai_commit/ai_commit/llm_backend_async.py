@@ -1,6 +1,9 @@
 import os
 
-import aiohttp
+import openai
+from together import AsyncTogether
+
+DEFAULT_MODEL = "gpt-4.1-nano"
 
 
 class AsyncLLMBackend:
@@ -8,9 +11,30 @@ class AsyncLLMBackend:
         raise NotImplementedError()
 
 
-class AsyncTogetherLlamaBackend(AsyncLLMBackend):
-    DEFAULT_MODEL = "togethercomputer/llama-3-70b-8192-turbo"
-    ENDPOINT = "https://api.together.xyz/v1/chat/completions"
+class AsyncOpenAIBackend(AsyncLLMBackend):
+    DEFAULT_MODEL = "gpt-4-1106-preview"
+
+    def __init__(self):
+        self.api_key = os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                "OPENAI_API_KEY environment variable must be set for OpenAI backend."
+            )
+        self.client = openai.AsyncOpenAI(api_key=self.api_key)
+
+    async def complete(self, prompt, model=None):
+        model = model or self.DEFAULT_MODEL
+        response = await self.client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=512,
+            temperature=0.3,
+        )
+        return response.choices[0].message.content
+
+
+class AsyncTogetherBackend(AsyncLLMBackend):
+    DEFAULT_MODEL = "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free"
 
     def __init__(self):
         self.api_key = os.getenv("TOGETHER_API_KEY")
@@ -18,34 +42,31 @@ class AsyncTogetherLlamaBackend(AsyncLLMBackend):
             raise ValueError(
                 "TOGETHER_API_KEY environment variable must be set for TogetherAI backend."
             )
+        self.client = AsyncTogether(api_key=self.api_key)
 
     async def complete(self, prompt, model=None):
         model = model or self.DEFAULT_MODEL
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 512,
-            "temperature": 0.3,
-        }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                self.ENDPOINT, headers=headers, json=payload, timeout=60
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-                return data["choices"][0]["message"]["content"]
+        response = await self.client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=512,
+            temperature=0.3,
+        )
+        return response.choices[0].message.content
+
+
+MODEL_PROVIDER_MAP = {
+    "gpt-4.1": AsyncOpenAIBackend,
+    "gpt-4.1-nano": AsyncOpenAIBackend,
+    "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free": AsyncTogetherBackend,
+}
 
 
 def get_async_llm_backend():
-    model_descr = os.getenv(
-        "AI_COMMIT_MODEL", "togethercomputer/llama-3-70b-8192-turbo"
+    model_descr = os.getenv("AI_COMMIT_MODEL", DEFAULT_MODEL)
+    for prefix, backend_cls in MODEL_PROVIDER_MAP.items():
+        if model_descr.startswith(prefix):
+            return backend_cls(), model_descr
+    raise ValueError(
+        f"No backend found for model '{model_descr}'. Supported prefixes: {list(MODEL_PROVIDER_MAP.keys())}"
     )
-    if model_descr.startswith("gpt-") or model_descr.startswith("openai"):
-        raise ValueError(
-            "OpenAI models are not supported. Please set AI_COMMIT_MODEL to a Together model (e.g. togethercomputer/llama-3-70b-8192-turbo)."
-        )
-    return AsyncTogetherLlamaBackend(), model_descr

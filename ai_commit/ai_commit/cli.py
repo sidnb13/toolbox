@@ -1,3 +1,4 @@
+import argparse
 import os
 import subprocess
 import sys
@@ -35,7 +36,23 @@ def get_staged_diff():
 
 
 def main():
-    if len(sys.argv) >= 2 and sys.argv[1] == "install-hook":
+    parser = argparse.ArgumentParser(description="AI-powered commit message generator.")
+    parser.add_argument(
+        "commit_msg_file", nargs="?", help="Path to commit message file (from git hook)"
+    )
+    parser.add_argument("install_hook", nargs="?", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--dry-run",
+        "-n",
+        action="store_true",
+        help="Show what would be committed, but don't actually write the commit message.",
+    )
+    args, unknown = parser.parse_known_args()
+
+    # Support legacy 'install-hook' positional
+    if (args.install_hook == "install-hook") or (
+        args.commit_msg_file == "install-hook"
+    ):
         git_dir = subprocess.check_output(
             ["git", "rev-parse", "--git-dir"], universal_newlines=True
         ).strip()
@@ -49,13 +66,34 @@ def main():
         )
         return
 
-    if len(sys.argv) < 2:
+    if args.dry_run:
+        diff = get_staged_diff()
+        if not diff.strip():
+            print("No staged changes detected.")
+            return
+        try:
+            commit_message = map_reduce_summarize(diff)
+        except Exception as e:
+            print(f"[ai-commit-msg] Error during commit message generation: {e}")
+            return
+        print("\n[ai-commit-msg] Staged files:")
+        for status, fname in get_staged_files():
+            print(f"  {status}\t{fname}")
+        print("\n[ai-commit-msg] Staged diff:\n")
+        print(diff)
         print(
-            "ai-commit-msg: This script should be run as a commit-msg hook or as 'ai-commit install-hook'."
+            "\n[ai-commit-msg] DRY RUN: Would generate the following commit message:\n"
+        )
+        print(commit_message)
+        return
+
+    if not args.commit_msg_file:
+        print(
+            "ai-commit-msg: This script should be run as a commit-msg hook, as 'ai-commit install-hook', or with --dry-run."
         )
         sys.exit(1)
 
-    commit_msg_file = sys.argv[1]
+    commit_msg_file = args.commit_msg_file
     # Read current commit message (may be empty)
     with open(commit_msg_file) as f:
         current_msg = f.read().strip()
