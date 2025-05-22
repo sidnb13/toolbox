@@ -56,13 +56,13 @@ def main():
         git_dir = subprocess.check_output(
             ["git", "rev-parse", "--git-dir"], universal_newlines=True
         ).strip()
-        hook_path = os.path.join(git_dir, "hooks", "commit-msg")
+        hook_path = os.path.join(git_dir, "hooks", "prepare-commit-msg")
         script = """#!/bin/sh\nai-commit \"$1\"\n"""
         with open(hook_path, "w") as f:
             f.write(script)
         os.chmod(hook_path, 0o755)
         print(
-            f"[ai-commit] Installed commit-msg hook at {hook_path} (it will now auto-summarize your commits!)"
+            f"[ai-commit] Installed prepare-commit-msg hook at {hook_path} (it will now auto-summarize your commits and pre-fill the message in your editor!)"
         )
         return
 

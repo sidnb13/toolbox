@@ -54,3 +54,23 @@ ai-commit --dry-run
 ```
 
 This will show the staged diff and the generated commit message, but will not write or commit anything.
+
+## Editor integration (prepare-commit-msg hook)
+
+To have the AI-generated commit message appear in your editor when you run `git commit`, install the hook:
+
+```
+ai-commit install-hook
+```
+
+This sets up a `prepare-commit-msg` hook, so the message is pre-filled for you to review/edit before saving.
+
+## Hook types explained
+
+| Hook type            | When it runs         | What it does / When to use it                |
+|--------------------- |---------------------|----------------------------------------------|
+| pre-commit           | Before commit editor | Checks/edits files before commit (not message) |
+| commit-msg           | After editor closes  | Edits/creates commit message after editing   |
+| prepare-commit-msg   | Before editor opens  | Pre-fills commit message in editor (RECOMMENDED for ai_commit) |
+
+**ai_commit** is designed to be used as a `prepare-commit-msg` hook for the best experience.
