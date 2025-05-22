@@ -11,3 +11,11 @@ repos:
         exclude: \.ipynb$
       - id: ruff-format
         exclude: \.ipynb$
+
+  - repo: local
+    hooks:
+      - id: ai-commit
+        name: ai-commit
+        entry: ai-commit
+        language: python
+        stages: [commit-msg]

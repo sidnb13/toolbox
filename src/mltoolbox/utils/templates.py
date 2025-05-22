@@ -62,7 +62,7 @@ def merge_env_files(project_dir: Path, template_env: dict) -> dict:
 
     # Read existing .env if it exists
     if env_file.exists():
-        with open(env_file, "r") as f:
+        with open(env_file) as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
@@ -174,16 +174,11 @@ def generate_project_files(
     if env_variant != "default":
         req_files.append(f"requirements-{env_variant}.txt")
 
-    if ray:
-        req_files.append("requirements-ray.txt")
-
     for req_file in req_files:
         req_path = project_dir / req_file
         if not req_path.exists():
             with open(req_path, "w") as f:
                 f.write(f"# {req_file} dependencies\n")
-                if "ray" in req_file and req_file == "requirements-ray.txt":
-                    f.write("ray[default,serve]\n")
 
     # Only create base requirements.txt if it doesn't exist
     if not (project_dir / "requirements.txt").exists():

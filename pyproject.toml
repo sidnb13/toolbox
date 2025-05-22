@@ -20,9 +20,10 @@ dependencies = [
 
 [project.scripts]
 mltoolbox = "mltoolbox.cli:cli"
+ai-commit-msg = "ai_commit.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mltoolbox"]
+packages = ["src/mltoolbox", "src/ai_commit"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/mltoolbox/base" = "mltoolbox/base"
