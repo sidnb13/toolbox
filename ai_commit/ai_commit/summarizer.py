@@ -1,13 +1,6 @@
-import os
+import asyncio
 
-import openai
-
-
-def get_openai_client():
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return None
-    return openai.OpenAI(api_key=api_key)
+from .llm_backend_async import get_async_llm_backend
 
 
 def chunk_list(lst, n):
@@ -30,23 +23,15 @@ def split_diff_by_file(diff_text):
     return files
 
 
-def summarize_with_llm(prompt):
-    client = get_openai_client()
-    if not client:
-        return None
+async def summarize_with_llm(prompt, llm, model):
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=80,
-            temperature=0.5,
-        )
-        return response.choices[0].message.content.strip()
+        return await llm.complete(prompt, model)
     except Exception:
         return None
 
 
-def summarize_diff(diff_text):
+async def async_summarize_diff(diff_text):
+    llm, model = get_async_llm_backend()
     files = split_diff_by_file(diff_text)
     if not files:
         return "No changes detected."
@@ -55,7 +40,7 @@ def summarize_diff(diff_text):
         prompt = f"""
 Summarize the following git diff for a single file in one concise sentence, following the format: [type] brief description. Types: [feat], [fix], [docs], [style], [refactor], [test], [chore], [delete], etc. Be descriptive but brief. Just return the commit message, nothing else.\n\nGit diff:\n{file_diff[:2000]}
 """
-        summary = summarize_with_llm(prompt)
+        summary = await summarize_with_llm(prompt, llm, model)
         if not summary:
             summary = "[chore] update file"
         file_summaries.append(summary)
@@ -67,7 +52,7 @@ Summarize the following git diff for a single file in one concise sentence, foll
             prompt = f"""
 Summarize the following commit messages into a single concise commit message (20 words or less), following the format: [type] brief description.\n\nMessages:\n{batch_prompt}
 """
-            summary = summarize_with_llm(prompt)
+            summary = await summarize_with_llm(prompt, llm, model)
             if not summary:
                 summary = "[chore] update files"
             new_summaries.append(summary)
@@ -80,7 +65,11 @@ Summarize the following commit messages into a single concise commit message (20
         prompt = f"""
 Summarize the following commit messages into a single concise commit message (20 words or less), following the format: [type] brief description.\n\nMessages:\n{final_prompt}
 """
-        summary = summarize_with_llm(prompt)
+        summary = await summarize_with_llm(prompt, llm, model)
         if not summary:
             summary = "[chore] update files"
         return summary
+
+
+def summarize_diff(diff_text):
+    return asyncio.run(async_summarize_diff(diff_text))
