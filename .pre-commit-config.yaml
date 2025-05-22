@@ -18,4 +18,6 @@ repos:
         name: ai-commit
         entry: ai-commit
         language: python
-        stages: [commit-msg]
+        types: [python]
+        files: .*
+        description: "AI-powered commit message generator"

@@ -1,0 +1,7 @@
+- id: ai-commit
+  name: ai-commit
+  entry: ai-commit
+  language: python
+  types: [python]
+  files: .*
+  description: "AI-powered commit message generator"
