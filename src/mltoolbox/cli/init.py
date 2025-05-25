@@ -25,7 +25,7 @@ from mltoolbox.utils.templates import generate_project_files
 @click.option(
     "--variant",
     default="cuda",
-    type=click.Choice(["cuda", "gh200"]),
+    type=click.Choice(["cpu", "cuda", "cuda-nightly"]),
     help="System variant to use",
 )
 @click.option(
@@ -110,5 +110,6 @@ def init(
     click.echo(f"✨ Project {project_name} (re)initialized!")
     click.echo(f"🧩 System variant: {variant}, Environment variant: {env_variant}")
     click.echo("\nNext steps:")
-    click.echo("1. Add your requirements to requirements.txt")
-    click.echo("2. Run 'mltoolbox container start' to begin development")
+    click.echo("1. Edit pyproject.toml to add your project-specific dependencies")
+    click.echo("2. Run 'uv sync --locked' to install dependencies")
+    click.echo("3. Run 'mltoolbox container start' to begin development")

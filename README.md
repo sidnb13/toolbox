@@ -2,13 +2,80 @@
 
 Containerization and setup tools for bootstrapping my ML research projects.
 
+## Features
+
+- **Modern dependency management** with [uv](https://github.com/astral-sh/uv) and `pyproject.toml`
+- **Containerized development** with Docker and Docker Compose
+- **Multiple PyTorch variants** (CPU, CUDA, CUDA nightly) with automatic index management
+- **Ray integration** for distributed computing
+- **Project templating** with sensible ML defaults
+
+## Quick Start
+
 Install ai commit hook:
 
 ```bash
 curl -s https://raw.githubusercontent.com/sidnb13/toolbox/refs/heads/master/utils/download.sh | bash
 ```
 
-Backlog:
+Initialize a new ML project:
+
+```bash
+mltoolbox init my-project
+cd my-project
+
+# Install dependencies with CUDA support (default)
+uv sync --locked --extra cuda --extra dev
+
+# Or install with CPU-only PyTorch
+uv sync --locked --extra cpu --extra dev
+
+# Start development container
+mltoolbox container start
+```
+
+## Dependency Management
+
+This toolbox uses **uv** for fast, reliable dependency management. All dependencies are defined in `pyproject.toml` with the following extras available:
+
+- `dev` - Development tools (Jupyter, IPython, pre-commit)
+- `cuda` - PyTorch with CUDA support
+- `cpu` - PyTorch CPU-only
+- `cuda-nightly` - PyTorch nightly builds with CUDA
+- `ray` - Ray distributed computing framework
+
+### Managing Dependencies
+
+```bash
+# Sync all dependencies with CUDA and dev tools
+uv sync --locked --extra cuda --extra dev
+
+# Add a new dependency
+uv add numpy>=1.24.0
+
+# Add a development dependency
+uv add --dev pytest
+
+# Update all dependencies
+uv lock --upgrade
+```
+
+### Variant Management
+
+Use the variant commands to manage different PyTorch installations:
+
+```bash
+# List available extras
+mltoolbox variant list-extras
+
+# Install specific PyTorch variant
+mltoolbox variant install-torch cuda
+
+# Sync with specific extras
+mltoolbox variant sync --extra cuda --extra dev
+```
+
+## Backlog
 
 - Skypilot integration to spin up instances from cli
 - Use a per-project config file for advanced configuration
@@ -16,51 +83,4 @@ Backlog:
 - cleaner, less hardcoded defaults for dockerfiles, etc.
 - Rich devcontainer support
 
-```mermaid
-graph TB
-    classDef controller fill:#2E5EAA,stroke:#173A7B,color:white
-    classDef ray fill:#0194E2,stroke:#015B8C,color:white
-    classDef container fill:#67B7D1,stroke:#4A8396,color:white
-    classDef storage fill:#FFA500,stroke:#CC8400,color:white
-    classDef cli fill:#4CAF50,stroke:#357935,color:white
-
-    Storage[(Remote Storage<br>FUSE/S3)]
-    Controller[Controller Service<br>Job Monitor & Resource Manager]:::controller
-    CLI[Local CLI Tool]:::cli
-
-    subgraph Instance1
-        I1_Ray[Ray Cluster]:::ray
-        I1_C1[Container 1]:::container
-        I1_C2[Container 2]:::container
-    end
-
-    subgraph Instance2
-        I2_Ray[Ray Cluster]:::ray
-        I2_C1[Container 1]:::container
-    end
-
-    subgraph InstanceN
-        IN_Ray[Ray Cluster]:::ray
-        IN_C1[Container 1]:::container
-        IN_C2[Container 2]:::container
-    end
-
-    CLI -->|Commands & Monitoring| Controller
-    Controller -->|Monitor/Control| Instance1
-    Controller -->|Monitor/Control| Instance2
-    Controller -->|Monitor/Control| InstanceN
-
-    I1_C1 -->|Submit Jobs| I1_Ray
-    I1_C2 -->|Submit Jobs| I1_Ray
-
-    I2_C1 -->|Submit Jobs| I2_Ray
-
-    IN_C1 -->|Submit Jobs| IN_Ray
-    IN_C2 -->|Submit Jobs| IN_Ray
-
-    Instance1 -.->|Data| Storage
-    Instance2 -.->|Data| Storage
-    InstanceN -.->|Data| Storage
-
-    Controller -.->|Job Status & Metrics| CLI
 ```

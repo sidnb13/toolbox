@@ -19,7 +19,7 @@ def ensure_ray_head_node(remote_config: Optional[RemoteConfig], python_version: 
         remote_config: Remote configuration for connection
         git_name: GitHub username for container image
         python_version: Python version to use (e.g., "3.12")
-        variant: System variant to use (e.g., "cuda", "gh200")
+        variant: System variant to use (e.g., "cpu", "cuda", "cuda-nightly")
     """
     if not remote_config:
         return
