@@ -27,11 +27,11 @@ RUN git config --global user.email "${GIT_EMAIL}" && \
     git config --global user.name "${GIT_NAME}"
 
 # Copy project files for uv
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock* ./
 
-# Install dependencies using uv
+# Install dependencies using uv (without --locked)
 RUN echo "Installing dependencies with uv..." && \
-    uv sync --locked --extra dev
+    uv sync --extra dev
 
 # Always install ipdb for debugging
 RUN uv pip install ipdb
