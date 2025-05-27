@@ -14,9 +14,6 @@ ARG PROJECT_NAME
 ARG VARIANT
 ARG SSH_KEY_NAME
 
-# Define ENV vars to make ARG values available at runtime
-ENV PATH="/usr/local/bin:/root/.local/bin:/opt/conda/bin:${PATH}"
-
 WORKDIR /workspace/${PROJECT_NAME}
 
 # Ensure the virtual environment is activated by adding it to PATH
@@ -26,15 +23,23 @@ ENV PATH="/workspace/${PROJECT_NAME}/.venv/bin:${PATH}"
 RUN git config --global user.email "${GIT_EMAIL}" && \
     git config --global user.name "${GIT_NAME}"
 
-# Copy project files for uv
+# Copy only dependency files first (for better caching)
 COPY pyproject.toml uv.lock* ./
 
-# Install dependencies using uv (without --locked)
-RUN echo "Installing dependencies with uv..." && \
-    uv sync --extra dev
+# Install dependencies only (not the project itself)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-install-project --extra dev
 
 # Always install ipdb for debugging
-RUN uv pip install ipdb
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install ipdb
+
+# Copy the rest of the project
+COPY . .
+
+# Install the project itself in editable mode
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked
 
 COPY scripts/ray-init.sh /usr/local/bin/ray-init.sh
 RUN chmod +x /usr/local/bin/ray-init.sh

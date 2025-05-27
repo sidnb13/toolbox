@@ -5,7 +5,7 @@ ARG PYTHON_VERSION
 # Combine environment variable settings
 ENV TZ=Etc/UTC \
     PATH="/usr/local/bin:${PATH}" \
-    PYTHONPATH="/usr/local/lib/python${PYTHON_VERSION}/dist-packages:${PYTHONPATH}" \
+    PYTHONPATH="/usr/local/lib/python${PYTHON_VERSION}/dist-packages:${PYTHONPATH:-}" \
     DEBIAN_FRONTEND=noninteractive \
     PYTHONBREAKPOINT=IPython.terminal.debugger.set_trace
 
@@ -55,6 +55,6 @@ RUN apt-get update && \
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python && \
     curl -LsSf https://astral.sh/uv/install.sh | sh && \
     # Make uv available in PATH for all users
-    ln -sf /root/.cargo/bin/uv /usr/local/bin/uv && \
+    ln -sf /root/.local/bin/uv /usr/local/bin/uv && \
     # Verify uv installation
-    uv --version
+    /root/.local/bin/uv --version

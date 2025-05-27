@@ -17,7 +17,7 @@ fi
 
 # Test SSH connection
 echo "🔍 Testing SSH connection to GitHub..."
-ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> /root/.ssh/known_hosts 2>/dev/null
+ssh-keyscan -t rsa,ecdsa,ed25519 github.com >>/root/.ssh/known_hosts 2>/dev/null
 ssh -T git@github.com 2>&1 || true
 
 # Create NVIDIA device symlinks if nvidia-ctk is available

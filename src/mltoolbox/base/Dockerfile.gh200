@@ -41,4 +41,6 @@ RUN chsh -s $(which zsh) && \
     git config --global core.editor vi
 
 # Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    # Make uv available in PATH for all users
+    ln -sf /root/.local/bin/uv /usr/local/bin/uv
