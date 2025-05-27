@@ -4,8 +4,7 @@ import subprocess
 import sys
 
 from dotenv import load_dotenv
-
-from ai_commit.map_reduce_summarizer import map_reduce_summarize
+from map_reduce_summarizer import map_reduce_summarize
 
 load_dotenv()
 
