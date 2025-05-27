@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 import click
@@ -5,80 +7,105 @@ import click
 
 @click.group()
 def variant():
-    """Manage variant-specific requirements and lockfiles."""
+    """Manage variant-specific dependencies using uv extras."""
     pass
 
 
 @variant.command()
 @click.option(
-    "--system-variant",
-    type=str,
-    required=True,
-    help="System variant to create (cuda, gh200)",
+    "--extra",
+    multiple=True,
+    help="Extra dependencies to install (e.g., cuda, cpu, ray, dev)",
 )
 @click.option(
-    "--env-variant",
-    type=str,
-    required=True,
-    help="Environment variant to create (a10, a100, etc)",
+    "--locked/--no-locked",
+    default=True,
+    help="Use locked dependencies (uv.lock file)",
 )
-def create_requirements(system_variant, env_variant):
-    """Create empty requirements files for specified variants."""
+def sync(extra, locked):
+    """Sync dependencies with specified extras using uv."""
     project_dir = Path.cwd()
 
-    # Create system variant requirements
-    system_req = project_dir / f"requirements-{system_variant}.txt"
-    if not system_req.exists():
-        with open(system_req, "w") as f:
-            f.write(f"# {system_variant} variant requirements\n")
-        click.echo(f"✅ Created {system_req}")
-    else:
-        click.echo(f"ℹ️ {system_req} already exists")
+    # Check if pyproject.toml exists
+    if not (project_dir / "pyproject.toml").exists():
+        click.echo("❌ No pyproject.toml found. Run 'mltoolbox init' first.")
+        return
 
-    # Create environment variant requirements
-    env_req = project_dir / f"requirements-env-{env_variant}.txt"
-    if not env_req.exists():
-        with open(env_req, "w") as f:
-            f.write(f"# {env_variant} environment requirements\n")
-        click.echo(f"✅ Created {env_req}")
-    else:
-        click.echo(f"ℹ️ {env_req} already exists")
+    # Build uv sync command
+    cmd = ["uv", "sync"]
+
+    if locked:
+        cmd.append("--locked")
+
+    # Add extras
+    for e in extra:
+        cmd.extend(["--extra", e])
+
+    # If no extras specified, show available ones
+    if not extra:
+        click.echo("No extras specified. Available extras:")
+        list_extras()
+        return
+
+    click.echo(f"🔄 Running: {' '.join(cmd)}")
+
+    try:
+        subprocess.run(cmd, check=True, cwd=project_dir)
+        click.echo("✅ Dependencies synced successfully!")
+    except subprocess.CalledProcessError as e:
+        click.echo(f"❌ Failed to sync dependencies: {e}")
+        sys.exit(1)
+    except FileNotFoundError:
+        click.echo("❌ uv not found. Please install uv first.")
+        sys.exit(1)
 
 
 @variant.command()
-def list():
-    """List all available variants and their requirements files."""
+def list_extras():
+    """List all available extras from pyproject.toml."""
     project_dir = Path.cwd()
+    pyproject_file = project_dir / "pyproject.toml"
 
-    # Find all system variants
-    system_variants = set()
-    env_variants = set()
-
-    for req_file in project_dir.glob("requirements-*.txt"):
-        filename = req_file.name
-        if filename.startswith("requirements-env-"):
-            # Extract env variant
-            env_variant = filename.replace("requirements-env-", "").replace(".txt", "")
-            env_variants.add(env_variant)
-        elif filename.startswith("requirements-"):
-            # Extract system variant
-            system_variant = filename.replace("requirements-", "").replace(".txt", "")
-            if system_variant != "ray":
-                system_variants.add(system_variant)
-
-    # Show results
-    if not system_variants and not env_variants:
-        click.echo("No variants found.")
+    if not pyproject_file.exists():
+        click.echo("❌ No pyproject.toml found.")
         return
 
-    click.echo("🧩 Available Variants:")
+    try:
+        import tomli
 
-    click.echo("\nSystem Variants:")
-    for variant in sorted(system_variants):
-        req_file = project_dir / f"requirements-{variant}.txt"
-        click.echo(f"  - {variant} ({'exists' if req_file.exists() else 'missing'})")
+        with open(pyproject_file, "rb") as f:
+            data = tomli.load(f)
 
-    click.echo("\nEnvironment Variants:")
-    for variant in sorted(env_variants):
-        req_file = project_dir / f"requirements-env-{variant}.txt"
-        click.echo(f"  - {variant} ({'exists' if req_file.exists() else 'missing'})")
+        optional_deps = data.get("project", {}).get("optional-dependencies", {})
+
+        if not optional_deps:
+            click.echo("No optional dependencies (extras) found.")
+            return
+
+        click.echo("🧩 Available Extras:")
+        for extra, deps in optional_deps.items():
+            click.echo(f"  - {extra} ({len(deps)} dependencies)")
+
+    except ImportError:
+        click.echo("❌ tomli not available. Install with: pip install tomli")
+    except Exception as e:
+        click.echo(f"❌ Error reading pyproject.toml: {e}")
+
+
+@variant.command()
+@click.argument("variant", type=click.Choice(["cuda", "cpu", "cuda-nightly"]))
+def install_torch(variant):
+    """Install PyTorch for a specific variant."""
+    click.echo(f"🔄 Installing PyTorch for {variant} variant...")
+
+    cmd = ["uv", "sync", "--locked", "--extra", variant, "--extra", "dev"]
+
+    try:
+        subprocess.run(cmd, check=True)
+        click.echo(f"✅ PyTorch {variant} variant installed successfully!")
+    except subprocess.CalledProcessError as e:
+        click.echo(f"❌ Failed to install PyTorch {variant}: {e}")
+        sys.exit(1)
+    except FileNotFoundError:
+        click.echo("❌ uv not found. Please install uv first.")
+        sys.exit(1)

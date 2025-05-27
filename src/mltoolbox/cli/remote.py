@@ -74,7 +74,7 @@ def provision():
 @click.option("--skip-sync", is_flag=True, help="Skip syncing project files")
 @click.option(
     "--variant",
-    type=click.Choice(["cuda", "gh200"]),
+    type=click.Choice(["cpu", "cuda", "cuda-nightly"]),
     default="cuda",
     help="Base image variant to use",
 )

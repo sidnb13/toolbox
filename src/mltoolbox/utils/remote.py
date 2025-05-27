@@ -19,7 +19,7 @@ def ensure_ray_head_node(remote_config: Optional[RemoteConfig], python_version: 
         remote_config: Remote configuration for connection
         git_name: GitHub username for container image
         python_version: Python version to use (e.g., "3.12")
-        variant: System variant to use (e.g., "cuda", "gh200")
+        variant: System variant to use (e.g., "cpu", "cuda", "cuda-nightly")
     """
     if not remote_config:
         return
@@ -81,7 +81,20 @@ def ensure_ray_head_node(remote_config: Optional[RemoteConfig], python_version: 
             )
         except Exception as e:
             click.echo(f"⚠️ Initial Ray head node start failed: {e}")
-            click.echo("🔄 Retrying without build cache...")
+            click.echo("🧹 Cleaning Docker cache and retrying...")
+
+            # Clean Docker cache and retry with --no-cache
+            try:
+                remote_cmd(
+                    remote_config,
+                    ["docker system prune -f"],
+                    use_working_dir=False,
+                )
+                click.echo("✅ Docker cache cleaned")
+            except Exception as cleanup_error:
+                click.echo(f"⚠️ Cache cleanup failed: {cleanup_error}")
+
+            click.echo("🔄 Retrying build without cache...")
             # Retry with --no-cache if first attempt fails
             remote_cmd(
                 remote_config,

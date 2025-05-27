@@ -51,6 +51,10 @@ RUN apt-get update && \
     rm -rf /tmp/* && \
     rm -rf /var/tmp/*
 
-# Install ray, pip, uv, and setup LSP
+# Install pip and uv
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python && \
-    curl -LsSf https://astral.sh/uv/install.sh | sh
+    curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    # Make uv available in PATH for all users
+    ln -sf /root/.cargo/bin/uv /usr/local/bin/uv && \
+    # Verify uv installation
+    uv --version
