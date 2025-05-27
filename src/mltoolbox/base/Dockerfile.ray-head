@@ -1,8 +1,11 @@
 ARG PYTHON_VERSION=3.12
 FROM python:${PYTHON_VERSION:-3.12}-slim
 
-# Set noninteractive installation
+# Set noninteractive installation and UTF-8 locale
 ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+ENV PYTHONIOENCODING=utf-8
 
 # Install basic dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -10,11 +13,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
     iproute2 \
     sudo \
+    locales \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Ray
-RUN pip install --no-cache-dir "ray[default]==2.44.0"
+# Generate UTF-8 locale
+RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
+    locale-gen
+
+# Install Ray with retry logic and cache clearing
+RUN pip cache purge && \
+    pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir --retries 3 --timeout 300 "ray[default]==2.44.0"
 
 # Setup working directory
 WORKDIR /ray

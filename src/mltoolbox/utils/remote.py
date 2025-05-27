@@ -81,7 +81,20 @@ def ensure_ray_head_node(remote_config: Optional[RemoteConfig], python_version: 
             )
         except Exception as e:
             click.echo(f"⚠️ Initial Ray head node start failed: {e}")
-            click.echo("🔄 Retrying without build cache...")
+            click.echo("🧹 Cleaning Docker cache and retrying...")
+
+            # Clean Docker cache and retry with --no-cache
+            try:
+                remote_cmd(
+                    remote_config,
+                    ["docker system prune -f"],
+                    use_working_dir=False,
+                )
+                click.echo("✅ Docker cache cleaned")
+            except Exception as cleanup_error:
+                click.echo(f"⚠️ Cache cleanup failed: {cleanup_error}")
+
+            click.echo("🔄 Retrying build without cache...")
             # Retry with --no-cache if first attempt fails
             remote_cmd(
                 remote_config,

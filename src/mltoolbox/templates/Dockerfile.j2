@@ -21,6 +21,9 @@ ENV PATH="/usr/local/bin:/root/.local/bin:/opt/conda/bin:${PATH}"
 
 WORKDIR /workspace/${PROJECT_NAME}
 
+# Ensure the virtual environment is activated by adding it to PATH
+ENV PATH="/workspace/${PROJECT_NAME}/.venv/bin:${PATH}"
+
 # Setup Git configuration
 RUN git config --global user.email "${GIT_EMAIL}" && \
     git config --global user.name "${GIT_NAME}"
@@ -47,7 +50,7 @@ RUN if [ "${ENV_VARIANT}" = "ray" ]; then \
     fi
 
 # Always install ipdb for debugging
-RUN uv pip install --system ipdb
+RUN uv pip install ipdb
 
 COPY scripts/ray-init.sh /usr/local/bin/ray-init.sh
 RUN chmod +x /usr/local/bin/ray-init.sh
