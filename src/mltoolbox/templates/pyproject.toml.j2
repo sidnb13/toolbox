@@ -34,6 +34,8 @@ dependencies = [
     "hydra-colorlog>=1.0.0",
     "hydra-joblib-launcher>=1.2.0",
     "hydra-submitit-launcher>=1.2.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
 ]
 
 [project.optional-dependencies]
@@ -43,24 +45,10 @@ dev = [
     "pre-commit>=3.0.0",
     "ipdb>=0.13.0",
 ]
-cpu = [
-    "torch>=2.0.0",
-    "torchvision>=0.15.0",
-]
-cuda = [
-    "torch>=2.0.0",
-    "torchvision>=0.15.0",
-]
-cuda-nightly = [
-    "torch>=2.0.0",
-    "torchvision>=0.15.0",
-]
-{%- if ray %}
 ray = [
     "ray[default]>=2.44.0",
     "hydra-ray-jobs-launcher @ git+https://github.com/sidnb13/hydra#egg=hydra-ray-jobs-launcher&subdirectory=plugins/hydra_ray_jobs_launcher",
 ]
-{%- endif %}
 
 [project.scripts]
 {{ project_name }} = "{{ project_name }}.cli:cli"
@@ -73,40 +61,4 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/{{ project_name }}"]
-
-[tool.uv]
-conflicts = [
-    [
-        { extra = "cpu" },
-        { extra = "cuda" },
-        { extra = "cuda-nightly" },
-    ],
-]
-
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cpu", marker = "extra == 'cpu'" },
-    { index = "pytorch-cuda", marker = "extra == 'cuda' and extra != 'cpu'" },
-    { index = "pytorch-cuda-nightly", marker = "extra == 'cuda-nightly' and extra != 'cpu' and extra != 'cuda'" },
-]
-torchvision = [
-    { index = "pytorch-cpu", marker = "extra == 'cpu'" },
-    { index = "pytorch-cuda", marker = "extra == 'cuda' and extra != 'cpu'" },
-    { index = "pytorch-cuda-nightly", marker = "extra == 'cuda-nightly' and extra != 'cpu' and extra != 'cuda'" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cuda"
-url = "https://download.pytorch.org/whl/cu124"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cuda-nightly"
-url = "https://download.pytorch.org/whl/nightly/cu124"
-explicit = true 
+packages = ["src/{{ project_name }}"] 

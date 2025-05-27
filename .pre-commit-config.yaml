@@ -12,8 +12,8 @@ repos:
       - id: ruff-format
         exclude: \.ipynb$
 
-  - repo: https://github.com/sidnb13/ai_commit
-    rev: 0.1.1
+  - repo: https://github.com/sidnb13/toolbox
+    rev: v2.0.0
     hooks:
       - id: ai-commit
         name: ai-commit

@@ -9,10 +9,13 @@ from mltoolbox.utils.db import DB
 from mltoolbox.utils.remote import update_env_file
 
 from .helpers import RemoteConfig, remote_cmd
+from .logger import get_logger
 
 
 def check_docker_group(remote: RemoteConfig) -> None:
     """Check if Docker is properly configured and user is in docker group."""
+    logger = get_logger()
+
     try:
         # Check if user is in docker group
         result = remote_cmd(remote, ["groups"])
@@ -26,7 +29,7 @@ def check_docker_group(remote: RemoteConfig) -> None:
             docker_working = False
 
         if needs_group_setup or not docker_working:
-            click.echo("🔧 Setting up Docker permissions...")
+            logger.step("Setting up Docker permissions")
 
             # Add docker group if needed
             remote_cmd(remote, ["sudo groupadd -f docker"])
@@ -37,14 +40,14 @@ def check_docker_group(remote: RemoteConfig) -> None:
             # Fix docker socket permissions
             remote_cmd(remote, ["sudo chmod 666 /var/run/docker.sock"])
 
-            click.echo("✅ Docker permissions set up successfully")
+            logger.success("Docker permissions set up successfully")
 
             # Verify docker now works without sudo
             try:
                 remote_cmd(remote, ["docker ps -q"], reload_session=True)
-                click.echo("✅ Docker now works without sudo")
+                logger.success("Docker now works without sudo")
             except subprocess.CalledProcessError:
-                click.echo("⚠️ Docker still requires sudo - continuing with sudo")
+                logger.warning("Docker still requires sudo - continuing with sudo")
 
         # Check if docker daemon uses the right cgroup driver
         result = remote_cmd(
@@ -73,24 +76,24 @@ def check_docker_group(remote: RemoteConfig) -> None:
                     ["docker ps --format '{{.Names}}'"],
                 ).stdout.strip()
 
-                click.echo(
-                    f"⚠️ WARNING: {running_containers} containers currently running:",
+                logger.warning(
+                    f"WARNING: {running_containers} containers currently running:"
                 )
-                click.echo(containers)
-                click.echo(
-                    "⚠️ Changing Docker daemon configuration will restart Docker and KILL all running containers!",
+                logger.info(containers)
+                logger.warning(
+                    "Changing Docker daemon configuration will restart Docker and KILL all running containers!"
                 )
 
                 if not click.confirm(
                     "Do you want to continue and modify Docker configuration?",
                     default=False,
                 ):
-                    click.echo(
-                        "❌ Docker configuration skipped. Some features may not work correctly.",
+                    logger.warning(
+                        "Docker configuration skipped. Some features may not work correctly."
                     )
                     return
 
-                click.echo("🔧 Configuring Docker cgroup driver...")
+                logger.step("Configuring Docker cgroup driver")
                 remote_cmd(
                     remote,
                     [
@@ -99,13 +102,13 @@ def check_docker_group(remote: RemoteConfig) -> None:
                         "sudo systemctl restart docker",
                     ],
                 )
-                click.echo("✅ Docker cgroup driver configured")
+                logger.success("Docker cgroup driver configured")
 
         # Verify Docker is working
-        click.echo("✅ Docker is properly configured")
+        logger.success("Docker is properly configured")
 
     except Exception as e:
-        click.echo(f"❌ Docker configuration check failed: {e}")
+        logger.error(f"Docker configuration check failed: {e}")
         raise
 
 
@@ -208,23 +211,24 @@ def start_container(
     status_result = cmd_output(container_status_cmd)
 
     # Auto-enable build if container doesn't exist, is unhealthy, or has exited
+    logger = get_logger()
     if not build:
         if status_result.returncode != 0 or not status_result.stdout.strip():
-            click.echo(
-                f"🔄 Container {container_name} not found. Will build from scratch.",
+            logger.step(
+                f"Container {container_name} not found. Will build from scratch."
             )
             build = True
         elif (
             "Exited" in status_result.stdout
             or "unhealthy" in status_result.stdout.lower()
         ):
-            click.echo(
-                f"🔄 Container {container_name} is in unhealthy state. Rebuilding...",
+            logger.step(
+                f"Container {container_name} is in unhealthy state. Rebuilding..."
             )
             build = True
         elif "Restarting" in status_result.stdout:
-            click.echo(
-                f"🔄 Container {container_name} is in a restart loop. Rebuilding...",
+            logger.step(
+                f"Container {container_name} is in a restart loop. Rebuilding..."
             )
             build = True
 

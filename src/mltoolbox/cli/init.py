@@ -4,6 +4,7 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 
+from mltoolbox.utils.logger import get_logger
 from mltoolbox.utils.templates import generate_project_files
 
 
@@ -25,18 +26,8 @@ from mltoolbox.utils.templates import generate_project_files
 @click.option(
     "--variant",
     default="cuda",
-    type=click.Choice(["cpu", "cuda", "cuda-nightly"]),
-    help="System variant to use",
-)
-@click.option(
-    "--env-variant",
-    default="default",
-    help="Environment variant to use (e.g., a10, a100)",
-)
-@click.option(
-    "--ssh-key-name",
-    default="id_ed25519",
-    help="SSH key name to use (e.g., 'github', 'id_ed25519')",
+    type=click.Choice(["cuda", "gh200"]),
+    help="Base image variant to use",
 )
 def init(
     project_name: str,
@@ -45,7 +36,6 @@ def init(
     inside_project: bool = False,
     python_version: str = "3.12",
     variant: str = "cuda",
-    env_variant: str = "default",
     ssh_key_name: str = "id_ed25519",
 ):
     """Initialize a new ML project."""
@@ -104,12 +94,12 @@ def init(
         env_vars=template_env,
         python_version=python_version,
         variant=variant,
-        env_variant=env_variant,
     )
 
-    click.echo(f"✨ Project {project_name} (re)initialized!")
-    click.echo(f"🧩 System variant: {variant}, Environment variant: {env_variant}")
-    click.echo("\nNext steps:")
-    click.echo("1. Edit pyproject.toml to add your project-specific dependencies")
-    click.echo("2. Run 'uv sync --locked' to install dependencies")
-    click.echo("3. Run 'mltoolbox container start' to begin development")
+    logger = get_logger()
+    logger.success(f"Project {project_name} (re)initialized!")
+    logger.info(f"Using {variant} base image")
+    logger.section("Next steps")
+    logger.info("1. Edit pyproject.toml to add your project-specific dependencies")
+    logger.info("2. Run 'uv sync --locked' to install dependencies")
+    logger.info("3. Run 'mltoolbox container start' to begin development")

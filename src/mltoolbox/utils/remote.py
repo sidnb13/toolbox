@@ -3,24 +3,26 @@ import os
 import subprocess
 import sys
 import time
+from importlib.resources import files
 from pathlib import Path
-from typing import Optional
 
 import click
-import pkg_resources
 
 from .helpers import RemoteConfig, remote_cmd
+from .logger import get_logger
 
 
-def ensure_ray_head_node(remote_config: Optional[RemoteConfig], python_version: str):
+def ensure_ray_head_node(remote_config: RemoteConfig | None, python_version: str):
     """Ensure Ray head node is running on the remote host.
 
     Args:
         remote_config: Remote configuration for connection
         git_name: GitHub username for container image
         python_version: Python version to use (e.g., "3.12")
-        variant: System variant to use (e.g., "cpu", "cuda", "cuda-nightly")
+        variant: Base image variant to use (e.g., "cuda", "gh200")
     """
+    logger = get_logger()
+
     if not remote_config:
         return
 
@@ -32,94 +34,114 @@ def ensure_ray_head_node(remote_config: Optional[RemoteConfig], python_version: 
     )
 
     if "not_running" in result.stdout:
-        click.echo("🚀 Starting Ray head node on remote host...")
+        logger.step("Starting Ray head node on remote host")
 
         # Get paths for Ray head files
-        ray_head_compose = Path(
-            pkg_resources.resource_filename(
-                "mltoolbox", "base/docker-compose-ray-head.yml"
-            )
-        )
-        ray_head_dockerfile = Path(
-            pkg_resources.resource_filename("mltoolbox", "base/Dockerfile.ray-head")
-        )
+        temp_files_to_cleanup = []
 
-        # Create directory for compose file
-        remote_cmd(
-            remote_config,
-            ["mkdir -p ~/ray"],
-            use_working_dir=False,
-        )
+        # Use modern importlib.resources
+        ray_head_compose_content = (
+            files("mltoolbox") / "base" / "docker-compose-ray-head.yml"
+        ).read_bytes()
+        ray_head_dockerfile_content = (
+            files("mltoolbox") / "base" / "Dockerfile.ray-head"
+        ).read_bytes()
 
-        # Copy files to remote
-        subprocess.run(
-            [
-                "scp",
-                str(ray_head_compose),
-                f"{remote_config.username}@{remote_config.host}:~/ray/docker-compose.yml",
-            ],
-            check=False,  # Changed from check=True to handle potential errors gracefully
-        )
+        # Create temporary files
+        import tempfile
 
-        subprocess.run(
-            [
-                "scp",
-                str(ray_head_dockerfile),
-                f"{remote_config.username}@{remote_config.host}:~/ray/Dockerfile.ray-head",
-            ],
-            check=False,  # Changed from check=True to handle potential errors gracefully
-        )
+        ray_head_compose = Path(tempfile.mktemp(suffix=".yml"))
+        ray_head_dockerfile = Path(tempfile.mktemp(suffix=".dockerfile"))
+        temp_files_to_cleanup.extend([ray_head_compose, ray_head_dockerfile])
 
-        # Start the Ray head node with docker compose, with explicit error handling
+        ray_head_compose.write_bytes(ray_head_compose_content)
+        ray_head_dockerfile.write_bytes(ray_head_dockerfile_content)
+
         try:
+            # Create directory for compose file
             remote_cmd(
                 remote_config,
-                [
-                    f"cd ~/ray && PYTHON_VERSION={python_version} DOCKER_BUILDKIT=0 docker compose up -d"
-                ],  # Added DOCKER_BUILDKIT=0
+                ["mkdir -p ~/ray"],
                 use_working_dir=False,
             )
-        except Exception as e:
-            click.echo(f"⚠️ Initial Ray head node start failed: {e}")
-            click.echo("🧹 Cleaning Docker cache and retrying...")
 
-            # Clean Docker cache and retry with --no-cache
+            # Copy files to remote
+            subprocess.run(
+                [
+                    "scp",
+                    str(ray_head_compose),
+                    f"{remote_config.username}@{remote_config.host}:~/ray/docker-compose.yml",
+                ],
+                check=False,  # Changed from check=True to handle potential errors gracefully
+            )
+
+            subprocess.run(
+                [
+                    "scp",
+                    str(ray_head_dockerfile),
+                    f"{remote_config.username}@{remote_config.host}:~/ray/Dockerfile.ray-head",
+                ],
+                check=False,  # Changed from check=True to handle potential errors gracefully
+            )
+
+            # Start the Ray head node with docker compose, with explicit error handling
             try:
                 remote_cmd(
                     remote_config,
-                    ["docker system prune -f"],
+                    [
+                        f"cd ~/ray && PYTHON_VERSION={python_version} DOCKER_BUILDKIT=0 docker compose up -d"
+                    ],  # Added DOCKER_BUILDKIT=0
                     use_working_dir=False,
                 )
-                click.echo("✅ Docker cache cleaned")
-            except Exception as cleanup_error:
-                click.echo(f"⚠️ Cache cleanup failed: {cleanup_error}")
+            except Exception as e:
+                logger.warning(f"Initial Ray head node start failed: {e}")
+                logger.step("Cleaning Docker cache and retrying")
 
-            click.echo("🔄 Retrying build without cache...")
-            # Retry with --no-cache if first attempt fails
-            remote_cmd(
-                remote_config,
-                [
-                    f"cd ~/ray && DOCKER_BUILDKIT=0 PYTHON_VERSION={python_version} docker compose build --no-cache && docker compose up -d"
-                ],
-                use_working_dir=False,
-            )
+                # Clean Docker cache and retry with --no-cache
+                try:
+                    remote_cmd(
+                        remote_config,
+                        ["docker system prune -f"],
+                        use_working_dir=False,
+                    )
+                    logger.success("Docker cache cleaned")
+                except Exception as cleanup_error:
+                    logger.warning(f"Cache cleanup failed: {cleanup_error}")
 
-        # Wait for Ray to be ready
-        click.echo("⏳ Waiting for Ray head node to be ready...")
-        for _ in range(10):
-            time.sleep(2)
-            result = remote_cmd(
-                remote_config,
-                ["nc -z localhost 6379 2>/dev/null || echo 'not_running'"],
-                use_working_dir=False,
-            )
-            if "not_running" not in result.stdout:
-                click.echo("✅ Ray head node is ready")
-                break
-        else:
-            click.echo(
-                "⚠️ Ray head node not responding after timeout, continuing anyway"
-            )
+                logger.step("Retrying build without cache")
+                # Retry with --no-cache if first attempt fails
+                remote_cmd(
+                    remote_config,
+                    [
+                        f"cd ~/ray && DOCKER_BUILDKIT=0 PYTHON_VERSION={python_version} docker compose build --no-cache && docker compose up -d"
+                    ],
+                    use_working_dir=False,
+                )
+
+            # Wait for Ray to be ready
+            with logger.spinner("Waiting for Ray head node to be ready"):
+                for _ in range(10):
+                    time.sleep(2)
+                    result = remote_cmd(
+                        remote_config,
+                        ["nc -z localhost 6379 2>/dev/null || echo 'not_running'"],
+                        use_working_dir=False,
+                    )
+                    if "not_running" not in result.stdout:
+                        logger.success("Ray head node is ready")
+                        break
+                else:
+                    logger.warning(
+                        "Ray head node not responding after timeout, continuing anyway"
+                    )
+        finally:
+            # Clean up temporary files
+            for temp_file in temp_files_to_cleanup:
+                try:
+                    if temp_file.exists():
+                        temp_file.unlink()
+                except Exception:
+                    pass  # Ignore cleanup errors
 
 
 def setup_zshrc(remote_config: RemoteConfig):
@@ -135,13 +157,14 @@ def setup_zshrc(remote_config: RemoteConfig):
 
 def setup_rclone(remote_config: RemoteConfig) -> None:
     """Setup rclone configuration on remote host."""
+    logger = get_logger()
     local_rclone_config = Path.home() / ".config/rclone/rclone.conf"
 
     if not local_rclone_config.exists():
-        click.echo("⚠️ No local rclone config found at ~/.config/rclone/rclone.conf")
+        logger.warning("No local rclone config found at ~/.config/rclone/rclone.conf")
         return
 
-    click.echo("📦 Setting up rclone configuration...")
+    logger.step("Setting up rclone configuration")
 
     # Create remote rclone config directory
     remote_cmd(
@@ -162,13 +185,13 @@ def setup_rclone(remote_config: RemoteConfig) -> None:
             ],
             check=True,
         )
-        click.echo("✅ Rclone config synced successfully")
+        logger.success("Rclone config synced successfully")
     except subprocess.CalledProcessError as e:
-        click.echo(f"❌ Failed to sync rclone config: {e}")
+        logger.error(f"Failed to sync rclone config: {e}")
 
 
 def update_env_file(
-    remote_config: Optional[RemoteConfig],
+    remote_config: RemoteConfig | None,
     project_name: str,
     updates: dict,
 ):
@@ -206,12 +229,17 @@ def update_env_file(
             env_file = Path.cwd() / ".env"
             env_file.write_text(updated_env)
 
-        click.echo(f"✅ Updated .env file with {len(updates)} variables")
+        logger = get_logger()
+        logger.success(f"Updated .env file with {len(updates)} variables")
 
         return env_dict
 
     except Exception as e:
-        click.echo(f"❌ Failed to update .env file: {e}")
+        logger = get_logger()
+        with logger.panel_output(
+            "Environment File Update Failed", subtitle="Configuration Error"
+        ) as panel:
+            panel.write(f"Failed to update .env file: {str(e)}")
         raise
 
 
@@ -222,7 +250,8 @@ def setup_remote_ssh_keys(remote_config: RemoteConfig, ssh_key_name: str = None)
     # Get key name from argument, env, or use default
     ssh_key_name = ssh_key_name or os.environ.get("SSH_KEY_NAME", "id_ed25519")
 
-    click.echo(f"🔑 Setting up SSH key '{ssh_key_name}' on remote host...")
+    logger = get_logger()
+    logger.step(f"Setting up SSH key '{ssh_key_name}' on remote host")
 
     # Check if the key exists
     key_check = remote_cmd(
@@ -232,7 +261,10 @@ def setup_remote_ssh_keys(remote_config: RemoteConfig, ssh_key_name: str = None)
     ).stdout.strip()
 
     if key_check == "missing":
-        click.echo(f"❌ SSH key '{ssh_key_name}' not found on remote host")
+        with logger.panel_output(
+            "SSH Key Not Found", subtitle="Configuration Error"
+        ) as panel:
+            panel.write(f"SSH key '{ssh_key_name}' not found on remote host")
         return False
 
     # Setup agent and add key - ONLY ON THE HOST, NOT IN CONTAINER
@@ -262,14 +294,20 @@ def setup_remote_ssh_keys(remote_config: RemoteConfig, ssh_key_name: str = None)
         )
 
         if "The agent has no identities" in result.stdout:
-            click.echo("❌ Failed to add SSH key to agent")
+            with logger.panel_output(
+                "SSH Agent Setup Failed", subtitle="Authentication Error"
+            ) as panel:
+                panel.write("Failed to add SSH key to agent")
             return False
 
-        click.echo("✅ SSH key added successfully to host SSH agent")
+        logger.success("SSH key added successfully to host SSH agent")
         return True
 
     except Exception as e:
-        click.echo(f"❌ Failed to set up SSH agent: {str(e)}")
+        with logger.panel_output(
+            "SSH Agent Setup Failed", subtitle="Authentication Error"
+        ) as panel:
+            panel.write(f"Failed to set up SSH agent: {str(e)}")
         return False
 
 
@@ -283,31 +321,32 @@ def wait_for_host(host: str, timeout: int | None = None) -> bool:
     Returns:
         bool: True if host becomes available, False if timeout reached
     """
+    logger = get_logger()
     start_time = time.time()
-    click.echo(f"Waiting for host {host} to become available...")
 
     def time_exceeded() -> bool:
         return timeout and (time.time() - start_time) > timeout
 
     remote_config = RemoteConfig(host=host, username="ubuntu")
 
-    while not time_exceeded():
-        try:
-            # Try to run a simple command
-            remote_cmd(
-                remote_config, ["echo 'testing connection'"], use_working_dir=False
-            )
-            click.echo("✅ Host is available and accepting SSH connections!")
-            return True
-        except Exception as e:
-            click.echo(f"Connection failed ({str(e)}), retrying...")
-            time.sleep(5)
+    with logger.spinner(f"Waiting for host {host} to become available"):
+        while not time_exceeded():
+            try:
+                # Try to run a simple command
+                remote_cmd(
+                    remote_config, ["echo 'testing connection'"], use_working_dir=False
+                )
+                logger.success("Host is available and accepting SSH connections!")
+                return True
+            except Exception as e:
+                logger.debug(f"Connection failed ({str(e)}), retrying...")
+                time.sleep(5)
 
-    click.echo(f"❌ Timeout reached after {timeout} seconds")
+    logger.error(f"Timeout reached after {timeout} seconds")
     return False
 
 
-def verify_env_vars(remote: Optional[RemoteConfig] = None) -> dict:  # noqa: FA100
+def verify_env_vars(remote: RemoteConfig | None = None) -> dict:  # noqa: FA100
     """Verify required environment variables and return all env vars as dict."""
     required_vars = ["GIT_NAME", "GITHUB_TOKEN", "GIT_EMAIL"]
     env_vars = {}
@@ -332,7 +371,7 @@ def verify_env_vars(remote: Optional[RemoteConfig] = None) -> dict:  # noqa: FA1
     else:
         # Local environment check
         if not Path.cwd().joinpath(".env").exists():
-            raise click.ClickException("❌ .env file not found")
+            raise click.ClickException(".env file not found")
 
         # Load env vars from the .env file
         with open(Path.cwd().joinpath(".env")) as f:
@@ -362,7 +401,7 @@ def sync_project(
     project_name: str,
     remote_path=None,
     exclude: list = "",
-    source_path: Optional[Path] = None,
+    source_path: Path | None = None,
 ) -> None:
     """Sync project files with remote host (one-way, local to remote)
 
@@ -394,12 +433,13 @@ def sync_project(
         ).stdout.strip()
 
         if remote_status and not click.confirm(
-            "⚠️ WARNING: Remote has untracked/modified files:\n"
+            "WARNING: Remote has untracked/modified files:\n"
             f"{remote_status}\n"
             "Do you want to proceed with sync? This might overwrite changes!",
             default=False,
         ):
-            click.echo("Skipping project sync, continuing with SSH key sync...")
+            logger = get_logger()
+            logger.info("Skipping project sync, continuing with SSH key sync...")
             do_project_sync = False
 
     # First sync SSH keys if they exist
@@ -428,14 +468,17 @@ def sync_project(
                     ],
                     check=True,
                 )
-                click.echo(f"✅ Copied SSH key {key_file} to remote host")
+                logger = get_logger()
+                logger.success(f"Copied SSH key {key_file} to remote host")
             except Exception as e:
-                click.echo(f"Warning: Failed to sync {key_file}: {e}")
+                logger = get_logger()
+                logger.warning(f"Failed to sync {key_file}: {e}")
 
     # Fix for the .env problem: manually copy .env file first if it exists
     local_env_file = Path.cwd() / ".env"
     if local_env_file.exists():
-        click.echo("📄 Syncing .env file separately to ensure it's transferred...")
+        logger = get_logger()
+        logger.step("Syncing .env file separately to ensure it's transferred")
         try:
             subprocess.run(
                 [
@@ -447,9 +490,9 @@ def sync_project(
                 ],
                 check=True,
             )
-            click.echo("✅ .env file synced successfully")
+            logger.success(".env file synced successfully")
         except Exception as e:
-            click.echo(f"Warning: Failed to sync .env file: {e}")
+            logger.warning(f"Failed to sync .env file: {e}")
 
     if not do_project_sync:
         return
@@ -508,9 +551,10 @@ def sync_project(
     )
 
     try:
-        click.echo("📦 Starting project sync...")
-        click.echo(f"From: {project_root}")
-        click.echo(f"To: {remote_config.host}:~/projects/{remote_path}")
+        logger = get_logger()
+        logger.section("Starting project sync")
+        logger.info(f"From: {project_root}")
+        logger.info(f"To: {remote_config.host}:~/projects/{remote_path}")
 
         # Run rsync and stream output in real-time
         process = subprocess.Popen(
@@ -527,10 +571,10 @@ def sync_project(
             if output == "" and process.poll() is not None:
                 break
             if output:
-                click.echo(output.rstrip())
+                logger.debug(output.rstrip())
 
         if process.returncode == 0:
-            click.echo("✅ Sync completed successfully!")
+            logger.success("Sync completed successfully!")
         else:
             stderr = process.stderr.read()
             raise subprocess.CalledProcessError(
@@ -538,14 +582,19 @@ def sync_project(
             )
 
     except subprocess.CalledProcessError as e:
-        click.echo("❌ Sync failed!")
-        click.echo(f"Exit code: {e.returncode}")
+        logger = get_logger()
+        error_content = []
+        error_content.append(f"Exit code: {e.returncode}")
         if e.stderr:
-            click.echo("Error output:")
-            click.echo(e.stderr)
-        raise click.ClickException(
-            "Failed to sync project files. See error details above."
-        )
+            error_content.append("Error output:")
+            error_content.append(e.stderr)
+
+        with logger.panel_output(
+            "Project Sync Failed", subtitle="Rsync Error"
+        ) as panel:
+            panel.write("\n".join(error_content))
+
+        raise click.ClickException("Failed to sync project files")
 
 
 def fetch_remote(
@@ -586,9 +635,10 @@ def fetch_remote(
         ]
     )
 
-    click.echo(f"📥 Downloading {remote_path} to {local_path}...")
+    logger = get_logger()
+    logger.step(f"Downloading {remote_path} to {local_path}")
     subprocess.run(rsync_cmd, check=True)
-    click.echo("✅ Download complete!")
+    logger.success("Download complete!")
 
 
 def build_rclone_cmd(
@@ -660,7 +710,9 @@ def run_rclone_sync(
     )
 
     # Execute rclone command
-    click.echo(f"Running: {' '.join(rclone_args)}")
+    logger = get_logger()
+    if logger.logger.level <= 10:  # DEBUG level
+        logger.debug(f"Running: {' '.join(rclone_args)}")
 
     try:
         # Create log files
@@ -690,10 +742,13 @@ def run_rclone_sync(
         result_msg = f"{timestamp}: Sync "
         if exit_code == 0:
             result_msg += "successful"
-            click.echo(f"\n✅ {result_msg}")
+            logger.success(result_msg)
         else:
             result_msg += f"failed with exit code {exit_code}"
-            click.echo(f"\n❌ {result_msg}")
+            with logger.panel_output(
+                "Rclone Sync Failed", subtitle=f"Exit code: {exit_code}"
+            ) as panel:
+                panel.write(result_msg)
 
         # Append to history log
         with open(history_path, "a") as history_file:
@@ -703,5 +758,8 @@ def run_rclone_sync(
             raise click.ClickException(f"rclone sync failed with exit code {exit_code}")
 
     except Exception as e:
-        click.echo(f"Error during sync: {e}")
+        with logger.panel_output(
+            "Rclone Sync Error", subtitle="Unexpected Error"
+        ) as panel:
+            panel.write(f"Error during sync: {str(e)}")
         raise click.ClickException(str(e))

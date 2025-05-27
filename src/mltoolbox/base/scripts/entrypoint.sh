@@ -36,7 +36,7 @@ fi
 echo "🖥️  Container System Information:"
 if [[ "$(uname -s)" == "Linux" ]]; then
     # Report variant information
-    echo "🧩 Using variants: ${SYSTEM_VARIANT:-cuda}/${ENV_VARIANT:-default}"
+    echo "🧩 Using variant: ${VARIANT:-cuda}"
 
     # Only run CUDA checks on Linux
     if command -v nvidia-smi &>/dev/null; then
@@ -85,10 +85,10 @@ if [ ! -z "${RAY_HEAD_ADDRESS}" ]; then
     fi
 fi
 
-# Run /usr/local/bin/install.sh with SYSTEM_VARIANT if it exists
+# Run /usr/local/bin/install.sh with VARIANT if it exists
 if [ -f /usr/local/bin/install.sh ]; then
-    echo "🔧 Running /usr/local/bin/install.sh with SYSTEM_VARIANT=${SYSTEM_VARIANT:-cuda}..."
-    SYSTEM_VARIANT="${SYSTEM_VARIANT:-cuda}" /usr/local/bin/install.sh
+    echo "🔧 Running /usr/local/bin/install.sh with VARIANT=${VARIANT:-cuda}..."
+    VARIANT="${VARIANT:-cuda}" /usr/local/bin/install.sh
 else
     echo "⚠️  /usr/local/bin/install.sh not found, skipping installation"
 fi

@@ -1,0 +1,15 @@
+- id: ai-commit
+  name: AI Commit Message Generator
+  description: Generate AI-powered commit messages
+  entry: ai-commit
+  language: python
+  types: [python]
+  require_serial: true
+  additional_dependencies:
+    - click>=8.0.0
+    - colorlog>=6.9.0
+    - python-dotenv>=0.19.0
+    - rich>=14.0.0
+    - openai
+    - together
+    - pre-commit 

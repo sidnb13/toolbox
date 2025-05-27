@@ -139,7 +139,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: src/mltoolbox/base
-          file: ${{ matrix.variant == 'gh200' && 'src/mltoolbox/base/Dockerfile.gh200' || 'src/mltoolbox/base/Dockerfile' }}
+          file: ${{ matrix.variant == 'gh200' && 'src/mltoolbox/base/Dockerfile.gh200' || 'src/mltoolbox/base/Dockerfile.cuda' }}
           platforms: ${{ matrix.arch }}
           push: true
           tags: ${{ steps.docker_meta.outputs.tags }}

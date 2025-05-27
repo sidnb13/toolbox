@@ -11,8 +11,7 @@ services:
         GIT_EMAIL: ${GIT_EMAIL}
         PROJECT_NAME: ${PROJECT_NAME}
         VARIANT: ${VARIANT}
-        ENV_VARIANT: ${ENV_VARIANT}
-    image: ${CONTAINER_NAME}:${VARIANT}-${ENV_VARIANT}
+    image: ${CONTAINER_NAME}:latest
     container_name: ${CONTAINER_NAME}
     hostname: ${CONTAINER_NAME}
     working_dir: /workspace/${PROJECT_NAME}

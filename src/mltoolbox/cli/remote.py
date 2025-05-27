@@ -73,13 +73,6 @@ def provision():
 )
 @click.option("--skip-sync", is_flag=True, help="Skip syncing project files")
 @click.option(
-    "--variant",
-    type=click.Choice(["cpu", "cuda", "cuda-nightly"]),
-    default="cuda",
-    help="Base image variant to use",
-)
-@click.option("--env-variant", default="default", help="Environment variant")
-@click.option(
     "--python-version",
     default=None,
     help="Python version to use (e.g., '3.10', '3.11')",
@@ -105,8 +98,6 @@ def connect(
     timeout,
     exclude,
     skip_sync,
-    variant,
-    env_variant,
     python_version,
     branch_name,
     network_mode,
@@ -212,12 +203,16 @@ def connect(
         f.write(f"    User {remote.username}\n")
         f.write("    ForwardAgent yes\n\n")
 
-    click.echo(f"Access your instance with `ssh {remote.alias}`")
+    from mltoolbox.utils.logger import get_logger
+
+    logger = get_logger()
+
+    logger.info(f"Access your instance with `ssh {remote.alias}`")
 
     setup_zshrc(remote_config)
     setup_rclone(remote_config)
 
-    click.echo(f"📁 Creating remote project directories for {project_name}")
+    logger.step(f"Creating remote project directories for {project_name}")
     remote_cmd(
         remote_config,
         [f"mkdir -p ~/projects/{project_name}"],
@@ -225,7 +220,7 @@ def connect(
     )
 
     check_docker_group(remote_config)
-    click.echo("✅ Docker group checked")
+    logger.success("Docker group checked")
 
     # First ensure remote directory exists
     remote_cmd(
@@ -243,13 +238,11 @@ def connect(
             exclude=exclude,
         )
     else:
-        click.echo("Skipping project sync, continuing with SSH key sync...")
+        logger.info("Skipping project sync, continuing with SSH key sync...")
 
     # Set up environment first
     env_updates = {
         **env_vars,
-        "VARIANT": variant,
-        "ENV_VARIANT": env_variant,
         "NVIDIA_DRIVER_CAPABILITIES": "all",
         "NVIDIA_VISIBLE_DEVICES": "all",
         "PROJECT_NAME": project_name,
@@ -263,11 +256,9 @@ def connect(
     # Add Python version to environment if specified
     if python_version:
         env_updates["PYTHON_VERSION"] = python_version
-        click.echo(f"🐍 Setting Python version to {python_version}")
+        logger.info(f"Setting Python version to {python_version}")
 
-    click.echo(
-        f"🔧 Updating environment with variant '{variant}' and env-variant '{env_variant}'..."
-    )
+    logger.step("Updating environment")
     env_vars = update_env_file(remote_config, project_name, env_updates)
     ssh_key_name = env_vars.get("SSH_KEY_NAME", "id_ed25519")
     # Set up SSH keys on remote host
@@ -304,7 +295,7 @@ def connect(
         port_mappings={"ray_dashboard": host_ray_dashboard_port},
     )
 
-    click.echo("🚀 Starting remote container...")
+    logger.step("Starting remote container")
 
     start_container(
         project_name,
@@ -333,20 +324,18 @@ def connect(
     ]
 
     # Print URL information to console
-    click.echo("\n===== Service URLs =====")
+    logger.section("Service URLs")
 
     # Add Ray dashboard port forwarding
     ssh_args.extend(["-L", f"{host_ray_dashboard_port}:localhost:8265"])
-    click.echo(f"📊 Ray Dashboard: http://localhost:{host_ray_dashboard_port}")
+    logger.info(f"Ray Dashboard: http://localhost:{host_ray_dashboard_port}")
 
     # Add additional user-specified port forwarding
     for port_mapping in forward_ports:
         if port_mapping:
             local_port, remote_port = port_mapping.split(":")
             ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
-            click.echo(f"🔌 Custom port: {local_port} -> {remote_port}")
-
-    click.echo("=======================\n")
+            logger.info(f"Custom port: {local_port} -> {remote_port}")
 
     # Add remaining SSH arguments
     ssh_args.extend(["-t", f"{remote.username}@{remote.host}", cmd])
@@ -358,33 +347,41 @@ def connect(
 @remote.command()
 def list_remotes():  # noqa: A001
     """List remotes and their associated projects."""
+    from mltoolbox.utils.logger import get_logger
+
+    logger = get_logger()
+
     with db.get_session() as session:
         remotes = session.query(Remote).options(joinedload(Remote.projects)).all()
 
         if not remotes:
-            click.echo("No remotes found")
+            logger.info("No remotes found")
             return
 
-        click.echo("\nConfigured remotes:")
+        logger.section("Configured remotes")
         for remote in remotes:
-            click.echo(f"\n{remote.alias}:")
-            click.echo(f"  Host: {remote.host}")
-            click.echo(f"  Last used: {remote.last_used}")
+            logger.info(f"{remote.alias}:")
+            logger.info(f"  Host: {remote.host}")
+            logger.info(f"  Last used: {remote.last_used}")
 
             # Show all projects associated with this remote
             if remote.projects:
-                click.echo("  Projects:")
+                logger.info("  Projects:")
                 for project in remote.projects:
-                    click.echo(f"    - {project.name}")
-                    click.echo(f"      Container: {project.container_name}")
+                    logger.info(f"    - {project.name}")
+                    logger.info(f"      Container: {project.container_name}")
 
 
 @remote.command()
 @click.argument("host_or_alias")
 def remove(host_or_alias: str):
     """Remove a remote."""
+    from mltoolbox.utils.logger import get_logger
+
+    logger = get_logger()
+
     db.delete_remote(host_or_alias=host_or_alias)
-    click.echo(f"Removed remote {host_or_alias}")
+    logger.success(f"Removed remote {host_or_alias}")
 
 
 @remote.command()
@@ -402,7 +399,10 @@ def sync(host_or_alias, exclude):
     remote_config = RemoteConfig(host=remote.host, username=remote.username)
 
     sync_project(remote_config, project_name, exclude=exclude)
-    click.echo(f"✅ Synced project files with remote host {host_or_alias}")
+    from mltoolbox.utils.logger import get_logger
+
+    logger = get_logger()
+    logger.success(f"Synced project files with remote host {host_or_alias}")
 
 
 @remote.command()
@@ -557,7 +557,10 @@ def datasync(
     # Build remote path if not provided
     if not remote_dir:
         remote_dir = f"gdbackup:research/{project_name}-data/"
-        click.echo(f"No remote directory specified, using: {remote_dir}")
+        from mltoolbox.utils.logger import get_logger
+
+        logger = get_logger()
+        logger.info(f"No remote directory specified, using: {remote_dir}")
 
     # Handle remote operation if needed
     if mode in ["host", "container"] and not host_or_alias:
@@ -600,7 +603,10 @@ def datasync(
     # Build rclone command based on mode
     if mode == "local":
         # Run locally
-        click.echo(f"Syncing from {source_dir} to {dest_dir} on local machine...")
+        from mltoolbox.utils.logger import get_logger
+
+        logger = get_logger()
+        logger.step(f"Syncing from {source_dir} to {dest_dir} on local machine")
         run_rclone_sync(
             source_dir,
             dest_dir,
@@ -618,7 +624,10 @@ def datasync(
         setup_rclone(remote_config)
 
         # Run on remote host
-        click.echo(f"Syncing from {source_dir} to {dest_dir} on remote host...")
+        from mltoolbox.utils.logger import get_logger
+
+        logger = get_logger()
+        logger.step(f"Syncing from {source_dir} to {dest_dir} on remote host")
 
         # Create destination directory if needed
         if direction == "down" and not dest_dir.startswith(
@@ -627,7 +636,6 @@ def datasync(
             remote_cmd(
                 remote_config,
                 [f"mkdir -p {dest_dir}"],
-                interactive=True,
             )
 
         # Build rclone command for remote execution
@@ -647,12 +655,14 @@ def datasync(
         remote_cmd(
             remote_config,
             [" ".join(rclone_cmd)],
-            interactive=True,
         )
 
     elif mode == "container":
         # Run inside the container on remote host
-        click.echo(f"Syncing from {source_dir} to {dest_dir} inside container...")
+        from mltoolbox.utils.logger import get_logger
+
+        logger = get_logger()
+        logger.step(f"Syncing from {source_dir} to {dest_dir} inside container")
 
         # Build rclone command for container execution
         rclone_cmd = build_rclone_cmd(
@@ -672,5 +682,4 @@ def datasync(
         remote_cmd(
             remote_config,
             [docker_cmd],
-            interactive=True,
         )

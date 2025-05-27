@@ -1,6 +1,18 @@
 from pathlib import Path
 
-import pkg_resources
+try:
+    # Python 3.9+
+    from importlib.resources import files
+except ImportError:
+    # Python 3.8 and below, use backport
+    try:
+        from importlib_resources import files
+    except ImportError:
+        # Fallback to pkg_resources if importlib_resources is not available
+        import pkg_resources
+
+        files = None
+
 from jinja2 import Environment, PackageLoader, select_autoescape
 
 
@@ -21,13 +33,22 @@ def merge_requirements(project_dir: Path) -> None:
     base_reqs = set()
 
     # Read base requirements
-    base_reqs_path = pkg_resources.resource_filename(
-        "mltoolbox", "base/requirements.txt"
-    )
-    if Path(base_reqs_path).exists():
-        for req in Path(base_reqs_path).read_text().splitlines():
-            if req.strip() and not req.startswith("#"):
-                base_reqs.add(parse_requirement(req))
+    if files is not None:
+        # Use modern importlib.resources
+        base_reqs_path = files("mltoolbox") / "base" / "requirements.txt"
+        if base_reqs_path.is_file():
+            for req in base_reqs_path.read_text().splitlines():
+                if req.strip() and not req.startswith("#"):
+                    base_reqs.add(parse_requirement(req))
+    else:
+        # Fallback to pkg_resources
+        base_reqs_path = pkg_resources.resource_filename(
+            "mltoolbox", "base/requirements.txt"
+        )
+        if Path(base_reqs_path).exists():
+            for req in Path(base_reqs_path).read_text().splitlines():
+                if req.strip() and not req.startswith("#"):
+                    base_reqs.add(parse_requirement(req))
 
     # Read existing requirements if exists
     if requirements_file.exists():
@@ -113,28 +134,46 @@ def generate_project_files(
     env_vars: dict,
     python_version: str = "3.12",
     variant: str = "cuda",
-    env_variant: str = "default",
 ) -> None:
     """Generate project files from templates"""
     # Create directory structure
     (project_dir / "scripts").mkdir(exist_ok=True)
     (project_dir / "assets").mkdir(exist_ok=True)
 
-    base_entrypoint = Path(
-        pkg_resources.resource_filename("mltoolbox", "base/scripts/entrypoint.sh")
-    )
-    project_entrypoint = project_dir / "scripts/entrypoint.sh"
-    project_entrypoint.write_bytes(base_entrypoint.read_bytes())
-    project_entrypoint.chmod(0o755)  # Make executable
+    if files is not None:
+        # Use modern importlib.resources
+        base_entrypoint_content = (
+            files("mltoolbox") / "base" / "scripts" / "entrypoint.sh"
+        ).read_bytes()
+        project_entrypoint = project_dir / "scripts/entrypoint.sh"
+        project_entrypoint.write_bytes(base_entrypoint_content)
+        project_entrypoint.chmod(0o755)  # Make executable
 
-    # Copy Ray init script if needed
-    if ray:
-        base_ray_init = Path(
-            pkg_resources.resource_filename("mltoolbox", "base/scripts/ray-init.sh")
+        # Copy Ray init script if needed
+        if ray:
+            base_ray_init_content = (
+                files("mltoolbox") / "base" / "scripts" / "ray-init.sh"
+            ).read_bytes()
+            project_ray_init = project_dir / "scripts/ray-init.sh"
+            project_ray_init.write_bytes(base_ray_init_content)
+            project_ray_init.chmod(0o755)  # Make executable
+    else:
+        # Fallback to pkg_resources
+        base_entrypoint = Path(
+            pkg_resources.resource_filename("mltoolbox", "base/scripts/entrypoint.sh")
         )
-        project_ray_init = project_dir / "scripts/ray-init.sh"
-        project_ray_init.write_bytes(base_ray_init.read_bytes())
-        project_ray_init.chmod(0o755)  # Make executable
+        project_entrypoint = project_dir / "scripts/entrypoint.sh"
+        project_entrypoint.write_bytes(base_entrypoint.read_bytes())
+        project_entrypoint.chmod(0o755)  # Make executable
+
+        # Copy Ray init script if needed
+        if ray:
+            base_ray_init = Path(
+                pkg_resources.resource_filename("mltoolbox", "base/scripts/ray-init.sh")
+            )
+            project_ray_init = project_dir / "scripts/ray-init.sh"
+            project_ray_init.write_bytes(base_ray_init.read_bytes())
+            project_ray_init.chmod(0o755)  # Make executable
 
     context = {
         "project_name": project_name.lower(),
@@ -142,7 +181,6 @@ def generate_project_files(
         "container_name": project_name.lower(),
         "python_version": python_version,
         "variant": variant,
-        "env_variant": env_variant,
         **env_vars,
     }
 
@@ -154,20 +192,14 @@ def generate_project_files(
     dockerfile = render_template("Dockerfile.j2", **context)
     (project_dir / "Dockerfile").write_text(dockerfile)
 
-    # Parse the template ENV into a dict
-    env_template = render_template(".env.j2", **context)
-    template_env = {}
-    for line in env_template.splitlines():
-        if line.strip() and not line.startswith("#"):
-            try:
-                key, value = line.split("=", 1)
-                template_env[key.strip()] = value.strip().strip('"')
-            except ValueError:
-                continue
-
-    # Add variant environment variables
-    template_env["VARIANT"] = variant
-    template_env["ENV_VARIANT"] = env_variant
+    # Create template environment variables directly
+    template_env = {
+        "PROJECT_NAME": project_name.upper(),
+        "CONTAINER_NAME": project_name.lower(),
+        "PYTHON_VERSION": python_version,
+        "VARIANT": variant,
+        **env_vars,
+    }
 
     # Merge with existing .env if it exists
     merged_env = merge_env_files(project_dir, template_env)
