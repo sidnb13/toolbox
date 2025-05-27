@@ -5,7 +5,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from .map_reduce_summarizer import map_reduce_summarize
+from ai_commit.map_reduce_summarizer import map_reduce_summarize
 
 load_dotenv()
 

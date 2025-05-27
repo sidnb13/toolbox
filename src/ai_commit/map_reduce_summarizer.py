@@ -2,7 +2,7 @@ import asyncio
 import os
 import re
 
-from .llm_backend_async import get_async_llm_backend
+from ai_commit.llm_backend_async import get_async_llm_backend
 
 COMMIT_MSG_WORD_LIMIT = int(os.getenv("AI_COMMIT_MSG_WORD_LIMIT", 10))
 

@@ -21,7 +21,7 @@ Homepage = "https://github.com/sidnb13/toolbox"
 Repository = "https://github.com/sidnb13/toolbox.git"
 
 [project.scripts]
-ai-commit = "ai_commit.cli:main"
+ai-commit = "cli:main"
 
 [build-system]
 requires = ["hatchling"]
