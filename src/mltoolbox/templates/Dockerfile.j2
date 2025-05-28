@@ -16,36 +16,27 @@ ARG SSH_KEY_NAME
 
 WORKDIR /workspace/${PROJECT_NAME}
 
-# Ensure the virtual environment is activated by adding it to PATH
-ENV PATH="/workspace/${PROJECT_NAME}/.venv/bin:${PATH}"
+# Use system Python environment instead of virtual environment
+ENV UV_SYSTEM_PYTHON=1
+# Let uv automatically select PyTorch backend based on platform
+ENV UV_TORCH_BACKEND=auto
 
 # Setup Git configuration
 RUN git config --global user.email "${GIT_EMAIL}" && \
     git config --global user.name "${GIT_NAME}"
 
-# Copy only dependency files first (for better caching)
+# Copy only the scripts we need
+COPY scripts/ray-init.sh /usr/local/bin/ray-init.sh
+COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/ray-init.sh /usr/local/bin/entrypoint.sh
+
+# Copy only dependency files
 COPY pyproject.toml uv.lock* ./
 
-# Install dependencies only (not the project itself)
+# Install everything to system Python
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-install-project --extra dev
-
-# Always install ipdb for debugging
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install ipdb
-
-# Copy the rest of the project
-COPY . .
-
-# Install the project itself in editable mode
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked
-
-COPY scripts/ray-init.sh /usr/local/bin/ray-init.sh
-RUN chmod +x /usr/local/bin/ray-init.sh
-
-COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+    uv pip install --system -e . && \
+    uv pip install --system ipdb
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["zsh"]

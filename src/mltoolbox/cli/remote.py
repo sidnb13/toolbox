@@ -88,6 +88,12 @@ def provision():
     default=None,
     help="Override network mode (default is 'host' from compose file)",
 )
+@click.option(
+    "--variant",
+    type=click.Choice(["cuda", "gh200"]),
+    default=None,
+    help="Base image variant to use (e.g., 'cuda', 'gh200')",
+)
 def connect(
     host_or_alias,
     alias,
@@ -101,6 +107,7 @@ def connect(
     python_version,
     branch_name,
     network_mode,
+    variant,
 ):
     """Connect to remote development environment."""
     # Validate host IP address format
@@ -257,6 +264,11 @@ def connect(
     if python_version:
         env_updates["PYTHON_VERSION"] = python_version
         logger.info(f"Setting Python version to {python_version}")
+
+    # Add variant to environment if specified
+    if variant:
+        env_updates["VARIANT"] = variant
+        logger.info(f"Setting variant to {variant}")
 
     logger.step("Updating environment")
     env_vars = update_env_file(remote_config, project_name, env_updates)
