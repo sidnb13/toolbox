@@ -94,7 +94,9 @@ def provision():
     default=None,
     help="Base image variant to use (e.g., 'cuda', 'gh200')",
 )
+@click.pass_context
 def connect(
+    ctx,
     host_or_alias,
     alias,
     username,
@@ -110,6 +112,7 @@ def connect(
     variant,
 ):
     """Connect to remote development environment."""
+    dryrun = ctx.obj.get("dryrun", False)
     # Validate host IP address format
     ip_pattern = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
     if not re.match(ip_pattern, host_or_alias):
@@ -118,7 +121,7 @@ def connect(
     else:
         host = host_or_alias
 
-    env_vars = verify_env_vars()
+    env_vars = verify_env_vars(dryrun=dryrun)
     project_name = env_vars.get("PROJECT_NAME", Path.cwd().name)
 
     # If project name from env doesn't match cwd, use cwd name to avoid conflicts
@@ -147,12 +150,18 @@ def connect(
         project_name=project_name,
         container_name=container_name,
         alias=alias,
+        dryrun=dryrun,
     )
 
-    if not wait_for_host(remote.host, timeout):
+    if not dryrun and not wait_for_host(remote.host, timeout):
         raise click.ClickException(
             f"Timeout waiting for host {remote.host} after {timeout} seconds"
         )
+    elif dryrun:
+        from mltoolbox.utils.logger import get_logger
+
+        logger = get_logger()
+        logger.info(f"[DRYRUN] Would wait for host {remote.host} (skipped)")
 
     remote_config = RemoteConfig(
         host=remote.host,
@@ -216,25 +225,38 @@ def connect(
 
     logger.info(f"Access your instance with `ssh {remote.alias}`")
 
-    setup_zshrc(remote_config)
-    setup_rclone(remote_config)
+    if not dryrun:
+        setup_zshrc(remote_config)
+        setup_rclone(remote_config)
+    else:
+        logger.info("[DRYRUN] Would setup zshrc and rclone (skipped)")
 
     logger.step(f"Creating remote project directories for {project_name}")
-    remote_cmd(
-        remote_config,
-        [f"mkdir -p ~/projects/{project_name}"],
-        use_working_dir=False,
-    )
+    if not dryrun:
+        remote_cmd(
+            remote_config,
+            [f"mkdir -p ~/projects/{project_name}"],
+            use_working_dir=False,
+        )
+    else:
+        logger.info("[DRYRUN] Would create remote project directories (skipped)")
 
-    check_docker_group(remote_config)
-    logger.success("Docker group checked")
+    if not dryrun:
+        check_docker_group(remote_config)
+        logger.success("Docker group checked")
+    else:
+        logger.info("[DRYRUN] Would check Docker group (skipped)")
+        logger.success("[DRYRUN] Docker group checked (simulated)")
 
     # First ensure remote directory exists
-    remote_cmd(
-        remote_config,
-        [f"mkdir -p ~/projects/{project_name}"],
-        use_working_dir=False,
-    )
+    if not dryrun:
+        remote_cmd(
+            remote_config,
+            [f"mkdir -p ~/projects/{project_name}"],
+            use_working_dir=False,
+        )
+    else:
+        logger.info("[DRYRUN] Would ensure remote directory exists (skipped)")
 
     # Simple sync - no worktree detection or special handling
     if not skip_sync:
@@ -243,6 +265,7 @@ def connect(
             project_name,
             remote_path=project_name,
             exclude=exclude,
+            dryrun=dryrun,
         )
     else:
         logger.info("Skipping project sync, continuing with SSH key sync...")
@@ -271,10 +294,13 @@ def connect(
         logger.info(f"Setting variant to {variant}")
 
     logger.step("Updating environment")
-    env_vars = update_env_file(remote_config, project_name, env_updates)
+    env_vars = update_env_file(remote_config, project_name, env_updates, dryrun=dryrun)
     ssh_key_name = env_vars.get("SSH_KEY_NAME", "id_ed25519")
     # Set up SSH keys on remote host
-    setup_remote_ssh_keys(remote_config, ssh_key_name)
+    if not dryrun:
+        setup_remote_ssh_keys(remote_config, ssh_key_name)
+    else:
+        logger.info("[DRYRUN] Would setup remote SSH keys (skipped)")
 
     # Get existing Ray dashboard port if available
     port_mappings = db.get_port_mappings(remote.id, project_name)

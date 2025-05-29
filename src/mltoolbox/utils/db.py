@@ -5,7 +5,6 @@ import os
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from sqlalchemy import (
     JSON,
@@ -71,11 +70,11 @@ class Remote(Base):
 
 
 class DB:
-    def __init__(self) -> None:
+    def __init__(self, dryrun: bool = False) -> None:
+        self.dryrun = dryrun
         config_dir = Path.home() / ".config" / "mltoolbox"
         config_dir.mkdir(parents=True, exist_ok=True)
         db_file = config_dir / "mltoolbox.db"
-
         if db_file.exists():
             try:
                 self.engine = create_engine(f"sqlite:///{db_file}")
@@ -83,10 +82,8 @@ class DB:
                     session.query(Remote).first()
             except Exception:  # noqa: BLE001
                 db_file.unlink()
-
         self.engine = create_engine(f"sqlite:///{db_file}")
         Base.metadata.create_all(self.engine)
-
         self.cleanup_duplicates()
 
     @contextmanager
@@ -113,11 +110,30 @@ class DB:
         port_mappings: dict | None = None,
         *,
         update_timestamp: bool = True,
+        dryrun: bool = False,
     ) -> Remote:
-        """Create or update a remote entry and associate it with a project.
+        if self.dryrun or dryrun:
+            from mltoolbox.utils.logger import get_logger
 
-        Also handles updating last_used timestamp and project associations.
-        """
+            logger = get_logger()
+            with logger.panel_output(
+                "Upsert Remote", subtitle="[DRY RUN]", status="success"
+            ) as panel:
+                panel.write(
+                    f"Would upsert remote: {username}@{host} for project {project_name}\nSimulated DB write, no changes made."
+                )
+            logger.success("[DRY RUN] Remote upsert simulated.")
+
+            # Return a dummy Remote object
+            class DummyRemote:
+                def __init__(self):
+                    self.username = username
+                    self.host = host
+                    self.project_name = project_name
+                    self.container_name = container_name
+                    self.alias = alias or "dummy-alias"
+
+            return DummyRemote()
         git_name = os.getenv("GIT_NAME")
         container_name = container_name or project_name
 
@@ -286,7 +302,7 @@ class DB:
                 return json.loads(project.port_mappings)
             return {}
 
-    def get_remote_fuzzy(self, query: str) -> Optional[Remote]:
+    def get_remote_fuzzy(self, query: str) -> Remote | None:
         with Session(self.engine) as session:
             # Search in both alias and host fields
             return (

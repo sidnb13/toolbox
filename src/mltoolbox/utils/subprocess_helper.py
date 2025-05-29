@@ -3,6 +3,7 @@ Subprocess utilities with integrated logging and output handling.
 """
 
 import subprocess
+import time as _time
 
 from .logger import get_logger
 
@@ -10,8 +11,9 @@ from .logger import get_logger
 class SubprocessRunner:
     """Enhanced subprocess runner with logging integration."""
 
-    def __init__(self):
+    def __init__(self, dryrun: bool = False):
         self.logger = get_logger()
+        self.dryrun = dryrun
 
     def run_with_live_output(
         self,
@@ -23,20 +25,17 @@ class SubprocessRunner:
     ) -> subprocess.CompletedProcess:
         """
         Run command with live output in a bordered panel.
-
-        Args:
-            cmd: Command to run
-            title: Title for the output panel
-            cwd: Working directory
-            env: Environment variables
-            shell: Whether to use shell
-
-        Returns:
-            CompletedProcess result
         """
+        if self.dryrun:
+            with self.logger.live_output(f"{title} [DRY RUN]") as output:
+                for i in range(10):
+                    output.write(f"Simulated output line {i + 1}\n")
+                    _time.sleep(0.1)
+            self.logger.success(f"[DRY RUN] {title} completed successfully")
+            return subprocess.CompletedProcess(cmd, 0, "Simulated stdout", "")
         if isinstance(cmd, str) and not shell:
             cmd = cmd.split()
-
+        start_time = _time.time()
         with self.logger.live_output(title) as output:
             try:
                 process = subprocess.Popen(
@@ -49,22 +48,19 @@ class SubprocessRunner:
                     env=env,
                     shell=shell,
                 )
-
-                # Read output line by line
                 for line in iter(process.stdout.readline, ""):
                     output.write(line)
-
                 process.wait()
-
+                duration = _time.time() - start_time
                 if process.returncode == 0:
-                    self.logger.success(f"{title} completed successfully")
+                    self.logger.success(
+                        f"{title} completed successfully in {duration:.2f}s"
+                    )
                 else:
                     self.logger.failure(
-                        f"{title} failed with exit code {process.returncode}"
+                        f"{title} failed with exit code {process.returncode} in {duration:.2f}s"
                     )
-
                 return subprocess.CompletedProcess(cmd, process.returncode, None, None)
-
             except Exception as e:
                 self.logger.error(f"Failed to run {title}: {e}")
                 raise
@@ -80,21 +76,19 @@ class SubprocessRunner:
     ) -> subprocess.CompletedProcess:
         """
         Run command and display output in a panel after completion.
-
-        Args:
-            cmd: Command to run
-            title: Title for the output panel
-            cwd: Working directory
-            env: Environment variables
-            shell: Whether to use shell
-            capture_output: Whether to capture and display output
-
-        Returns:
-            CompletedProcess result
         """
+        if self.dryrun:
+            with self.logger.panel_output(
+                f"{title}", subtitle="[DRY RUN]", status="success"
+            ) as panel:
+                panel.write(
+                    f"Would run: {cmd}\nSimulated output...\nAll actions skipped."
+                )
+            self.logger.success(f"[DRY RUN] {title} completed successfully")
+            return subprocess.CompletedProcess(cmd, 0, "Simulated stdout", "")
         if isinstance(cmd, str) and not shell:
             cmd = cmd.split()
-
+        start_time = _time.time()
         try:
             with self.logger.spinner(f"Running {title}..."):
                 result = subprocess.run(
@@ -106,30 +100,33 @@ class SubprocessRunner:
                     shell=shell,
                     check=False,
                 )
-
+            duration = _time.time() - start_time
+            status = "success" if result.returncode == 0 else "failed"
+            output_content = ""
             if capture_output and (result.stdout or result.stderr):
-                output_content = ""
                 if result.stdout:
                     output_content += result.stdout
                 if result.stderr:
                     if output_content:
                         output_content += "\n" + "─" * 40 + " STDERR " + "─" * 40 + "\n"
                     output_content += result.stderr
-
-                with self.logger.panel_output(
-                    title, subtitle=f"Exit code: {result.returncode}"
-                ) as panel:
-                    panel.write(output_content)
-
+            with self.logger.panel_output(
+                title,
+                subtitle=f"Exit code: {result.returncode}",
+                status=status,
+                exit_code=result.returncode,
+                duration=duration,
+            ) as panel:
+                panel.write(output_content)
             if result.returncode == 0:
-                self.logger.success(f"{title} completed successfully")
+                self.logger.success(
+                    f"{title} completed successfully in {duration:.2f}s"
+                )
             else:
                 self.logger.failure(
-                    f"{title} failed with exit code {result.returncode}"
+                    f"{title} failed with exit code {result.returncode} in {duration:.2f}s"
                 )
-
             return result
-
         except Exception as e:
             self.logger.error(f"Failed to run {title}: {e}")
             raise
@@ -155,6 +152,9 @@ class SubprocessRunner:
         Returns:
             CompletedProcess result
         """
+        if self.dryrun:
+            self.logger.info(f"[DRY RUN] Would run silently: {cmd}")
+            return subprocess.CompletedProcess(cmd, 0, "Simulated stdout", "")
         if isinstance(cmd, str) and not shell:
             cmd = cmd.split()
 

@@ -194,8 +194,20 @@ def update_env_file(
     remote_config: RemoteConfig | None,
     project_name: str,
     updates: dict,
+    dryrun: bool = False,
 ):
     """Update environment file with new values, preserving existing variables."""
+    logger = get_logger()
+    if dryrun:
+        with logger.panel_output(
+            "Update .env File", subtitle="[DRY RUN]", status="success"
+        ) as panel:
+            panel.write(
+                f"Would update .env with: {updates}\nSimulated update, no changes made."
+            )
+        logger.success("[DRY RUN] .env file update simulated.")
+        return updates
+
     try:
         # Get existing env vars (remote or local)
         if remote_config:
@@ -346,23 +358,27 @@ def wait_for_host(host: str, timeout: int | None = None) -> bool:
     return False
 
 
-def verify_env_vars(remote: RemoteConfig | None = None) -> dict:  # noqa: FA100
+def verify_env_vars(remote: RemoteConfig | None = None, dryrun: bool = False) -> dict:  # noqa: FA100
     """Verify required environment variables and return all env vars as dict."""
     required_vars = ["GIT_NAME", "GITHUB_TOKEN", "GIT_EMAIL"]
     env_vars = {}
-
+    if dryrun:
+        # Return plausible dummy env vars
+        return {
+            "GIT_NAME": "dummyuser",
+            "GITHUB_TOKEN": "ghp_dummy1234567890",
+            "GIT_EMAIL": "dummy@example.com",
+            "PROJECT_NAME": "dummyproject",
+            "CONTAINER_NAME": "dummycontainer",
+        }
     if remote:
         # First get all env vars
         result = remote_cmd(remote, ["test -f .env && cat .env || echo ''"])
-
-        # Parse env vars from the output
         for line in result.stdout.splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, value = line.split("=", 1)
                 env_vars[key] = value.strip("'\"")
-
-        # Check if required vars exist
         missing_vars = [var for var in required_vars if var not in env_vars]
         if missing_vars:
             raise click.ClickException(
@@ -372,27 +388,20 @@ def verify_env_vars(remote: RemoteConfig | None = None) -> dict:  # noqa: FA100
         # Local environment check
         if not Path.cwd().joinpath(".env").exists():
             raise click.ClickException(".env file not found")
-
-        # Load env vars from the .env file
         with open(Path.cwd().joinpath(".env")) as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     key, value = line.split("=", 1)
                     env_vars[key] = value.strip("'\"")
-
-        # Check also in current environment for required vars
         for var in required_vars:
             if var not in env_vars and os.getenv(var):
                 env_vars[var] = os.getenv(var)
-
-        # Check if required vars exist
         missing_vars = [var for var in required_vars if var not in env_vars]
         if missing_vars:
             raise click.ClickException(
                 f"Required environment variables not set: {', '.join(missing_vars)}",
             )
-
     return env_vars
 
 
@@ -402,6 +411,7 @@ def sync_project(
     remote_path=None,
     exclude: list = "",
     source_path: Path | None = None,
+    dryrun: bool = False,
 ) -> None:
     """Sync project files with remote host (one-way, local to remote)
 
@@ -412,6 +422,18 @@ def sync_project(
         exclude: Patterns to exclude
         source_path: Optional source path to sync from (defaults to current directory)
     """
+    logger = get_logger()
+    if dryrun:
+        with logger.live_output(
+            f"Sync Project to {remote_config.host} [DRY RUN]"
+        ) as output:
+            for i in range(10):
+                output.write(f"Simulated sync file {i + 1}\n")
+                import time as _time
+
+                _time.sleep(0.1)
+        logger.success("[DRY RUN] Project sync simulated.")
+        return
 
     remote_path = remote_path or project_name
     project_root = source_path if source_path else Path.cwd()
@@ -438,7 +460,6 @@ def sync_project(
             "Do you want to proceed with sync? This might overwrite changes!",
             default=False,
         ):
-            logger = get_logger()
             logger.info("Skipping project sync, continuing with SSH key sync...")
             do_project_sync = False
 
@@ -468,16 +489,13 @@ def sync_project(
                     ],
                     check=True,
                 )
-                logger = get_logger()
                 logger.success(f"Copied SSH key {key_file} to remote host")
             except Exception as e:
-                logger = get_logger()
                 logger.warning(f"Failed to sync {key_file}: {e}")
 
     # Fix for the .env problem: manually copy .env file first if it exists
     local_env_file = Path.cwd() / ".env"
     if local_env_file.exists():
-        logger = get_logger()
         logger.step("Syncing .env file separately to ensure it's transferred")
         try:
             subprocess.run(
@@ -551,7 +569,6 @@ def sync_project(
     )
 
     try:
-        logger = get_logger()
         logger.section("Starting project sync")
         logger.info(f"From: {project_root}")
         logger.info(f"To: {remote_config.host}:~/projects/{remote_path}")

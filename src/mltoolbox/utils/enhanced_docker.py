@@ -12,9 +12,10 @@ from .subprocess_helper import run_silent, run_with_live_output, run_with_panel_
 class EnhancedDockerRunner:
     """Docker operations with enhanced logging and output handling."""
 
-    def __init__(self, remote_config: RemoteConfig | None = None):
+    def __init__(self, remote_config: RemoteConfig | None = None, dryrun: bool = False):
         self.logger = get_logger()
         self.remote_config = remote_config
+        self.dryrun = dryrun
 
     def build_image(
         self,
@@ -39,23 +40,39 @@ class EnhancedDockerRunner:
         Returns:
             bool: True if build succeeded
         """
+        import time as _time
+
         self.logger.section(f"Building Docker Image: {tag}")
+        if self.dryrun:
+            import random
+            import time as _time
 
-        # Construct build command
+            steps = [
+                "Step 1/7 : FROM python:3.10",
+                "Step 2/7 : COPY . /app",
+                "Step 3/7 : RUN pip install -r requirements.txt",
+                "Step 4/7 : RUN pytest",
+                "Step 5/7 : EXPOSE 8080",
+                "Step 6/7 : CMD ['python', 'main.py']",
+                "Step 7/7 : LABEL version=1.0",
+                f"Successfully built {''.join(random.choices('abcdef1234567890', k=12))}",
+            ]
+            with self.logger.live_output(f"Docker Build: {tag} [DRY RUN]") as output:
+                for step in steps:
+                    output.write(step + "\n")
+                    _time.sleep(0.2)
+            self.logger.success(f"[DRY RUN] Successfully built image: {tag}")
+            return True
         cmd = ["docker", "build", "-f", dockerfile_path, "-t", tag]
-
         if no_cache:
             cmd.append("--no-cache")
-
         if build_args:
             for key, value in build_args.items():
                 cmd.extend(["--build-arg", f"{key}={value}"])
-
         cmd.append(context_path)
-
         try:
+            start_time = _time.time()
             if self.remote_config:
-                # Remote build
                 cmd_str = " ".join(cmd)
                 if live_output:
                     with self.logger.live_output(f"Docker Build: {tag}") as output:
@@ -69,31 +86,32 @@ class EnhancedDockerRunner:
                             output.write(f"\nSTDERR:\n{result.stderr}")
                 else:
                     result = remote_cmd(self.remote_config, [cmd_str])
+                    duration = _time.time() - start_time
                     with self.logger.panel_output(
                         f"Docker Build: {tag}",
                         subtitle=f"Exit code: {result.returncode}",
+                        status="success" if result.returncode == 0 else "failed",
+                        exit_code=result.returncode,
+                        duration=duration,
                     ) as panel:
                         panel.write(result.stdout)
                         if result.stderr:
                             panel.write(f"\nSTDERR:\n{result.stderr}")
-
                 success = result.returncode == 0
             else:
-                # Local build
                 if live_output:
                     result = run_with_live_output(cmd, f"Docker Build: {tag}")
                 else:
                     result = run_with_panel_output(cmd, f"Docker Build: {tag}")
-
                 success = result.returncode == 0
-
+            duration = _time.time() - start_time
             if success:
-                self.logger.success(f"Successfully built image: {tag}")
+                self.logger.success(
+                    f"Successfully built image: {tag} in {duration:.2f}s"
+                )
             else:
-                self.logger.failure(f"Failed to build image: {tag}")
-
+                self.logger.failure(f"Failed to build image: {tag} in {duration:.2f}s")
             return success
-
         except Exception as e:
             self.logger.error(f"Docker build failed: {e}")
             return False
@@ -126,7 +144,17 @@ class EnhancedDockerRunner:
             bool: True if container started successfully
         """
         self.logger.step(f"Starting container from image: {image}")
-
+        if self.dryrun:
+            with self.logger.panel_output(
+                f"Run Container: {image}",
+                subtitle="[DRY RUN]",
+                status="success",
+            ) as panel:
+                panel.write(
+                    f"Would run: docker run ... {image}\nSimulating container start...\nContainer ID: abcdef123456 (simulated)"
+                )
+            self.logger.success("[DRY RUN] Container started successfully")
+            return True
         cmd = ["docker", "run"]
 
         if detach:
@@ -209,57 +237,64 @@ class EnhancedDockerRunner:
         Returns:
             bool: True if compose up succeeded
         """
+        import time as _time
+
         self.logger.section("Starting Docker Compose Services")
+        if self.dryrun:
+            import time as _time
 
+            services = ["web", "db", "worker"]
+            with self.logger.live_output("Docker Compose Up [DRY RUN]") as output:
+                for svc in services:
+                    output.write(f"Creating service {svc}...\n")
+                    _time.sleep(0.2)
+                output.write("All services simulated as started.\n")
+            self.logger.success(
+                "[DRY RUN] Docker Compose services started successfully"
+            )
+            return True
         cmd = ["docker", "compose", "-f", compose_file]
-
         if project_name:
             cmd.extend(["-p", project_name])
-
         cmd.append("up")
-
         if detach:
             cmd.append("-d")
-
         if build:
             cmd.append("--build")
-
         try:
+            start_time = _time.time()
             env = None
             if env_vars:
                 import os
 
                 env = os.environ.copy()
                 env.update(env_vars)
-
             if self.remote_config:
-                # Set environment variables for remote command
                 env_prefix = ""
                 if env_vars:
                     env_prefix = (
                         " ".join([f"{k}={v}" for k, v in env_vars.items()]) + " "
                     )
-
                 cmd_str = env_prefix + " ".join(cmd)
-
                 with self.logger.live_output("Docker Compose Up") as output:
                     result = remote_cmd(self.remote_config, [cmd_str])
                     output.write(result.stdout)
                     if result.stderr:
                         output.write(f"\nSTDERR:\n{result.stderr}")
-
                 success = result.returncode == 0
             else:
                 result = run_with_live_output(cmd, "Docker Compose Up", env=env)
                 success = result.returncode == 0
-
+            duration = _time.time() - start_time
             if success:
-                self.logger.success("Docker Compose services started successfully")
+                self.logger.success(
+                    f"Docker Compose services started successfully in {duration:.2f}s"
+                )
             else:
-                self.logger.failure("Failed to start Docker Compose services")
-
+                self.logger.failure(
+                    f"Failed to start Docker Compose services in {duration:.2f}s"
+                )
             return success
-
         except Exception as e:
             self.logger.error(f"Docker Compose failed: {e}")
             return False

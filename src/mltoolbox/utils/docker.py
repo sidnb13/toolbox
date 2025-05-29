@@ -174,7 +174,19 @@ def start_container(
     host_ray_dashboard_port=None,
     branch_name: str | None = None,
     network_mode: str | None = None,  # Add this parameter
+    dryrun: bool = False,
 ) -> None:
+    logger = get_logger()
+    if dryrun:
+        with logger.panel_output(
+            f"Start Container: {container_name}", subtitle="[DRY RUN]", status="success"
+        ) as panel:
+            panel.write(
+                f"Would start container: {container_name} for project {project_name}\nSimulated Docker start, no actions taken."
+            )
+        logger.success("[DRY RUN] Container start simulated.")
+        return
+
     def cmd_wrap(cmd):
         if remote_config:
             return remote_cmd(remote_config, cmd)
@@ -211,7 +223,6 @@ def start_container(
     status_result = cmd_output(container_status_cmd)
 
     # Auto-enable build if container doesn't exist, is unhealthy, or has exited
-    logger = get_logger()
     if not build:
         if status_result.returncode != 0 or not status_result.stdout.strip():
             logger.step(

@@ -6,7 +6,6 @@ import logging
 import re
 import sys
 import threading
-import time
 from contextlib import contextmanager
 
 import colorlog
@@ -102,6 +101,7 @@ class MLToolboxLogger:
         self.logger = self._setup_logger()
         self._live_lock = threading.Lock()  # Lock to prevent concurrent Live displays
         self._initialized = True
+        self.dryrun = False
 
     def _setup_logger(self) -> logging.Logger:
         """Set up colorlog logger with rich formatting."""
@@ -136,38 +136,59 @@ class MLToolboxLogger:
 
         return logger
 
+    def set_dryrun(self, dryrun: bool = True):
+        self.dryrun = dryrun
+
     def info(self, message: str, **kwargs):
         """Log info message."""
+        if self.dryrun:
+            message = f"[DRY RUN] {message}"
         self.logger.info(message, **kwargs)
 
     def warning(self, message: str, **kwargs):
         """Log warning message."""
+        if self.dryrun:
+            message = f"[DRY RUN] {message}"
         self.logger.warning(message, **kwargs)
 
     def error(self, message: str, **kwargs):
         """Log error message."""
+        if self.dryrun:
+            message = f"[DRY RUN] {message}"
         self.logger.error(message, **kwargs)
 
     def debug(self, message: str, **kwargs):
         """Log debug message."""
+        if self.dryrun:
+            message = f"[DRY RUN] {message}"
         self.logger.debug(message, **kwargs)
 
     def success(self, message: str):
-        """Log success message with green checkmark."""
-        self.console.print(f"[green]✓[/green] {message}")
+        """Log success message (no emoji, just green text)."""
+        if self.dryrun:
+            message = f"[DRY RUN] {message}"
+        self.console.print(f"[green]{message}[/green]")
 
     def failure(self, message: str):
-        """Log failure message with red X."""
-        self.console.print(f"[red]✗[/red] {message}")
+        """Log failure message (no emoji, just red text)."""
+        if self.dryrun:
+            message = f"[DRY RUN] {message}"
+        self.console.print(f"[red]{message}[/red]")
 
     def step(self, message: str):
-        """Log a step in the process."""
-        self.console.print(f"[blue]→[/blue] {message}")
+        """Log a step in the process (no emoji, just blue text)."""
+        if self.dryrun:
+            message = f"[DRY RUN] {message}"
+        self.console.print(f"[blue]{message}[/blue]")
 
     def section(self, title: str):
-        """Print a section header."""
-        self.console.print(f"\n[bold blue]{title}[/bold blue]")
-        self.console.print("[blue]" + "─" * len(title) + "[/blue]")
+        """Print a section header with timestamp and horizontal rule."""
+        from datetime import datetime
+
+        now = datetime.now().strftime("%H:%M:%S")
+        prefix = "[DRY RUN] " if self.dryrun else ""
+        self.console.print(f"[bold blue]{now}  {prefix}{title}[/bold blue]")
+        self.console.print("[grey37]" + "─" * 60 + "[/grey37]")
 
     @contextmanager
     def spinner(self, message: str):
@@ -195,17 +216,30 @@ class MLToolboxLogger:
             yield None
 
     @contextmanager
-    def panel_output(self, title: str, subtitle: str | None = None):
-        """Context manager for bordered output panel."""
+    def panel_output(
+        self,
+        title: str,
+        subtitle: str | None = None,
+        status: str = None,
+        exit_code: int = None,
+        duration: float = None,
+    ):
+        """Context manager for bordered output panel with summary and clean look."""
+        import time as _time
+        from datetime import datetime
+
+        _time.time()
         content_lines = []
+        panel_status = status
+        panel_exit_code = exit_code
+        panel_duration = duration
+        dryrun = self.dryrun
 
         class PanelCapture:
             def write(self, text):
                 if text.strip():
-                    # Clean the text thoroughly
                     clean_text = clean_terminal_output(text)
                     if clean_text.strip():
-                        # Split into lines and filter out empty ones
                         lines = [
                             line.rstrip()
                             for line in clean_text.split("\n")
@@ -217,74 +251,85 @@ class MLToolboxLogger:
                 pass
 
         capture = PanelCapture()
-
         try:
             yield capture
         finally:
+            _time.time()
             if content_lines:
-                # Remove duplicate consecutive lines and excessive whitespace
                 filtered_lines = []
                 prev_line = None
                 for line in content_lines:
                     if line != prev_line and line.strip():
                         filtered_lines.append(line)
                         prev_line = line
-
-                if filtered_lines:
-                    content = "\n".join(filtered_lines)
-                    panel = Panel(
-                        content,
-                        title=f"[bold]{title}[/bold]",
-                        subtitle=subtitle,
-                        border_style="blue",
-                        padding=(0, 1),
-                        expand=False,  # Don't expand to full width
-                    )
-                    self.console.print(panel)
+                content = "\n".join(filtered_lines)
+                # Compose summary line
+                now = datetime.now().strftime("%H:%M:%S")
+                summary = f"{now}  "
+                if dryrun:
+                    summary += "[DRY RUN] "
+                if panel_status:
+                    summary += f"{panel_status.upper()}  "
+                if panel_exit_code is not None:
+                    summary += f"Exit code: {panel_exit_code}  "
+                if panel_duration is not None:
+                    summary += f"Duration: {panel_duration:.2f}s"
+                border_style = "grey37"
+                if panel_status == "success":
+                    border_style = "green"
+                elif panel_status == "failed":
+                    border_style = "red"
+                panel = Panel(
+                    f"[bold]{summary}[/bold]\n[white on black]{content}[/white on black]",
+                    title=f"[bold]{title}[/bold]",
+                    subtitle=subtitle,
+                    border_style=border_style,
+                    padding=(0, 2),
+                    expand=True,
+                )
+                self.console.print(panel)
 
     @contextmanager
     def live_output(self, title: str):
-        """Context manager for live updating output with better Docker build handling."""
-        # Try to acquire the live lock, but don't block
+        """Context manager for live updating output with pro CLI look."""
+        import time as _time
+        from datetime import datetime
+
+        dryrun = self.dryrun
         if self._live_lock.acquire(blocking=False):
             try:
                 content_buffer = []
                 last_update_time = 0
-
+                _time.time()
                 with Live(
                     Panel(
                         "Starting...",
                         title=f"[bold]{title}[/bold]",
-                        border_style="blue",
+                        border_style="grey37",
+                        padding=(0, 2),
+                        expand=True,
                     ),
                     console=self.console,
-                    refresh_per_second=2,  # Even slower refresh for stability
+                    refresh_per_second=5,  # 0.2s
                 ) as live:
 
                     class LiveCapture:
                         def write(self, content):
                             nonlocal last_update_time
-                            current_time = time.time()
-
+                            current_time = _time.time()
                             if content.strip():
-                                # Clean the content thoroughly
                                 clean_content = clean_terminal_output(content)
                                 if clean_content.strip():
-                                    # Split into lines and process each
                                     lines = clean_content.split("\n")
                                     for line in lines:
                                         line = line.strip()
                                         if line and self._should_show_line(line):
                                             content_buffer.append(line)
-
-                                    # Keep only last 15 lines for better readability
-                                    if len(content_buffer) > 15:
-                                        content_buffer = content_buffer[-15:]
-
-                                    # Throttle updates to avoid overwhelming the display
-                                    if (
-                                        current_time - last_update_time > 0.5
-                                    ):  # Update at most 2 times per second
+                                    if len(content_buffer) > 30:
+                                        content_buffer = content_buffer[-30:]
+                                    if current_time - last_update_time > 0.2:
+                                        now = datetime.now().strftime("%H:%M:%S")
+                                        header = f"[bold]{now}  {'[DRY RUN] ' if dryrun else ''}{title}[/bold]"
                                         display_text = (
                                             "\n".join(content_buffer)
                                             if content_buffer
@@ -292,11 +337,10 @@ class MLToolboxLogger:
                                         )
                                         live.update(
                                             Panel(
-                                                display_text,
-                                                title=f"[bold]{title}[/bold]",
-                                                border_style="blue",
-                                                padding=(0, 1),
-                                                expand=False,
+                                                f"{header}\n[white on black]{display_text}[/white on black]",
+                                                border_style="grey37",
+                                                padding=(0, 2),
+                                                expand=True,
                                             )
                                         )
                                         last_update_time = current_time
@@ -305,23 +349,22 @@ class MLToolboxLogger:
                             pass
 
                     yield LiveCapture()
-
                     # Final update with all content
                     if content_buffer:
+                        now = datetime.now().strftime("%H:%M:%S")
+                        header = f"[bold]{now}  {'[DRY RUN] ' if dryrun else ''}{title} - Complete[/bold]"
                         final_content = "\n".join(content_buffer)
                         live.update(
                             Panel(
-                                final_content,
-                                title=f"[bold]{title}[/bold] - Complete",
+                                f"{header}\n[white on black]{final_content}[/white on black]",
                                 border_style="green",
-                                padding=(0, 1),
-                                expand=False,
+                                padding=(0, 2),
+                                expand=True,
                             )
                         )
             finally:
                 self._live_lock.release()
         else:
-            # Fallback to panel output if live display is already active
             with self.panel_output(title) as panel:
                 yield panel
 
