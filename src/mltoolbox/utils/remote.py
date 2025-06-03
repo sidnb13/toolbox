@@ -323,12 +323,15 @@ def setup_remote_ssh_keys(remote_config: RemoteConfig, ssh_key_name: str = None)
         return False
 
 
-def wait_for_host(host: str, timeout: int | None = None) -> bool:
+def wait_for_host(
+    host: str, timeout: int | None = None, username: str = "ubuntu"
+) -> bool:
     """Wait for host to become available by checking both ping and SSH connectivity.
 
     Args:
         host: Hostname or IP address to check
         timeout: Maximum time to wait in seconds, None for infinite
+        username: Remote username to use for SSH connection (default: "ubuntu")
 
     Returns:
         bool: True if host becomes available, False if timeout reached
@@ -339,7 +342,7 @@ def wait_for_host(host: str, timeout: int | None = None) -> bool:
     def time_exceeded() -> bool:
         return timeout and (time.time() - start_time) > timeout
 
-    remote_config = RemoteConfig(host=host, username="ubuntu")
+    remote_config = RemoteConfig(host=host, username=username)
 
     with logger.spinner(f"Waiting for host {host} to become available"):
         while not time_exceeded():

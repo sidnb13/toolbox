@@ -153,7 +153,7 @@ def connect(
         dryrun=dryrun,
     )
 
-    if not dryrun and not wait_for_host(remote.host, timeout):
+    if not dryrun and not wait_for_host(remote.host, timeout, username):
         raise click.ClickException(
             f"Timeout waiting for host {remote.host} after {timeout} seconds"
         )
