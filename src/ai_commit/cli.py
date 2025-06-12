@@ -6,9 +6,6 @@ import sys
 from dotenv import load_dotenv
 from map_reduce_summarizer import map_reduce_summarize
 
-load_dotenv()
-
-
 def get_staged_files():
     # Returns list of (status, filename) tuples
     output = subprocess.check_output(
@@ -119,4 +116,5 @@ def main():
 
 
 if __name__ == "__main__":
+    load_dotenv(override=True)
     main()

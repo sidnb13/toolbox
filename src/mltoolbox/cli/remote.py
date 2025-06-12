@@ -94,6 +94,11 @@ def provision():
     default=None,
     help="Base image variant to use (e.g., 'cuda', 'gh200')",
 )
+@click.option(
+    "--dependency-tags",
+    default="dev",
+    help="Comma-separated dependency tags to install (e.g., 'dev,array')",
+)
 @click.pass_context
 def connect(
     ctx,
@@ -110,6 +115,7 @@ def connect(
     branch_name,
     network_mode,
     variant,
+    dependency_tags,
 ):
     """Connect to remote development environment."""
     dryrun = ctx.obj.get("dryrun", False)
@@ -140,7 +146,7 @@ def connect(
                 check=True,
             )
             branch_name = result.stdout.strip()
-        except:
+        except:  # noqa: E722
             branch_name = None
 
     # Get or create/update remote and project
@@ -276,6 +282,7 @@ def connect(
         "NVIDIA_DRIVER_CAPABILITIES": "all",
         "NVIDIA_VISIBLE_DEVICES": "all",
         "PROJECT_NAME": project_name,
+        "DEPENDENCY_TAGS": dependency_tags,
     }
 
     # Get current branch if not specified
