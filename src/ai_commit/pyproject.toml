@@ -1,6 +1,6 @@
 [project]
 name = "ai-commit"
-version = "v0.1.0.dev1"
+version = "v0.1.0.dev2"
 description = "AI-powered commit message generator"
 requires-python = ">=3.10"
 authors = [

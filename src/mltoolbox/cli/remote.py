@@ -99,6 +99,11 @@ def provision():
     default="dev",
     help="Comma-separated dependency tags to install (e.g., 'dev,array')",
 )
+@click.option(
+    "--identity-file",
+    default=None,
+    help="Identity file to use for SSH connection (e.g., '~/.ssh/id_ed25519')",
+)
 @click.pass_context
 def connect(
     ctx,
@@ -116,6 +121,7 @@ def connect(
     network_mode,
     variant,
     dependency_tags,
+    identity_file,
 ):
     """Connect to remote development environment."""
     dryrun = ctx.obj.get("dryrun", False)
@@ -157,6 +163,7 @@ def connect(
         container_name=container_name,
         alias=alias,
         dryrun=dryrun,
+        identity_file=identity_file,
     )
 
     if not dryrun and not wait_for_host(remote.host, timeout, username):
@@ -173,6 +180,7 @@ def connect(
         host=remote.host,
         username=remote.username,
         working_dir=f"~/projects/{project_name}",
+        identity_file=remote.identity_file or Path.home() / ".ssh/id_ed25519",
     )
 
     # create custom ssh config if not exists
@@ -223,7 +231,10 @@ def connect(
         f.write(f"Host {remote.alias}\n")
         f.write(f"    HostName {remote.host}\n")
         f.write(f"    User {remote.username}\n")
-        f.write("    ForwardAgent yes\n\n")
+        f.write("    ForwardAgent yes\n")
+        if remote.identity_file:
+            f.write(f"    IdentityFile {remote.identity_file}\n")
+        f.write("\n")
 
     from mltoolbox.utils.logger import get_logger
 
@@ -367,6 +378,10 @@ def connect(
         "-o",
         "ServerAliveCountMax=3",
     ]
+
+    # Add identity file if specified
+    if remote.identity_file:
+        ssh_args.extend(["-i", remote.identity_file])
 
     # Print URL information to console
     logger.section("Service URLs")

@@ -67,6 +67,7 @@ class Remote(Base):
         secondary=remote_projects,
         back_populates="remotes",
     )
+    identity_file: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class DB:
@@ -108,6 +109,7 @@ class DB:
         conda_env: str | None = None,
         alias: str | None = None,
         port_mappings: dict | None = None,
+        identity_file: str | None = None,
         *,
         update_timestamp: bool = True,
         dryrun: bool = False,
@@ -194,6 +196,7 @@ class DB:
                     username=username,
                     host=host,
                     git_name=git_name,
+                    identity_file=identity_file,
                 )
                 session.add(remote)
             else:

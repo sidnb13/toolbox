@@ -1,10 +1,42 @@
 import argparse
+import asyncio
 import os
 import subprocess
 import sys
 
 from dotenv import load_dotenv
+from llm_backend_async import MODEL_PROVIDER_MAP, get_async_llm_backend
 from map_reduce_summarizer import map_reduce_summarize
+
+
+async def test_api_key(llm):
+    """Make a minimal test request to verify the API key works."""
+    try:
+        await llm.complete("test")
+        return True
+    except Exception as e:
+        print(f"Error: API key validation failed: {str(e)}")
+        return False
+
+
+async def validate_api_key():
+    """Validate that the appropriate API key is set and works."""
+    model_descr = os.getenv("AI_COMMIT_MODEL", "gpt-4.1-nano")
+    for prefix, backend_cls in MODEL_PROVIDER_MAP.items():
+        if model_descr.startswith(prefix):
+            try:
+                llm, _ = get_async_llm_backend()
+                if await test_api_key(llm):
+                    return
+                sys.exit(1)
+            except ValueError as e:
+                print(f"Error: {str(e)}")
+                sys.exit(1)
+    print(
+        f"Error: No backend found for model '{model_descr}'. Supported prefixes: {list(MODEL_PROVIDER_MAP.keys())}"
+    )
+    sys.exit(1)
+
 
 def get_staged_files():
     # Returns list of (status, filename) tuples
@@ -32,6 +64,9 @@ def get_staged_diff():
 
 
 def main():
+    load_dotenv(override=True)
+    asyncio.run(validate_api_key())
+
     parser = argparse.ArgumentParser(description="AI-powered commit message generator.")
     parser.add_argument(
         "commit_msg_file", nargs="?", help="Path to commit message file (from git hook)"
@@ -116,5 +151,4 @@ def main():
 
 
 if __name__ == "__main__":
-    load_dotenv(override=True)
     main()

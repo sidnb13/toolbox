@@ -17,6 +17,7 @@ class RemoteConfig:
     username: str
     ssh_key: str | None = None
     working_dir: str | None = None
+    identity_file: str | None = None
 
 
 def get_ssh_config(
@@ -91,7 +92,9 @@ def remote_cmd(
         start_time = time.time()
         with logger.spinner(f"Executing command on {config.host}"):
             if reload_session:
-                ssh = session_manager.reload_session(actual_hostname, actual_username)
+                ssh = session_manager.reload_session(
+                    actual_hostname, actual_username, **connect_kwargs
+                )
             else:
                 ssh = session_manager.get_session(
                     actual_hostname,

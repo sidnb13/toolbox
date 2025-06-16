@@ -113,7 +113,9 @@ class SSHSessionManager:
             with self._locks[session_key]:
                 self._remove_session(session_key)
 
-    def reload_session(self, hostname: str, username: str) -> paramiko.SSHClient:
+    def reload_session(
+        self, hostname: str, username: str, **connect_kwargs
+    ) -> paramiko.SSHClient:
         """Force reload a session to pick up new group memberships or environment changes."""
         session_key = self._get_session_key(hostname, username)
 
@@ -127,7 +129,7 @@ class SSHSessionManager:
             logger.success("Previous session closed")
 
         # Let get_session create a new connection
-        return self.get_session(hostname, username)
+        return self.get_session(hostname, username, **connect_kwargs)
 
 
 session_manager = SSHSessionManager()
