@@ -303,6 +303,10 @@ def connect(
 
     # Add Python version to environment if specified
     if python_version:
+        if not re.match(r"^\\d+\\.\\d+\\.\\d+$", python_version):
+            raise click.ClickException(
+                "Please specify the full Python version, e.g., 3.11.12"
+            )
         env_updates["PYTHON_VERSION"] = python_version
         logger.info(f"Setting Python version to {python_version}")
 

@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 import click
@@ -39,6 +40,10 @@ def init(
     ssh_key_name: str = "id_ed25519",
 ):
     """Initialize a new ML project."""
+    if python_version and not re.match(r"^\d+\.\d+\.\d+$", python_version):
+        raise click.ClickException(
+            "Please specify the full Python version, e.g., 3.11.12"
+        )
     load_dotenv(".env")
     project_dir = Path(project_name) if not inside_project else Path.cwd()
     project_name = project_dir.name

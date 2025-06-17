@@ -4,7 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile.ray-head
       args:
-      - PYTHON_VERSION=${PYTHON_VERSION:-3.12}
+      - PYTHON_VERSION=${PYTHON_VERSION:-3.12.12}
+      - VARIANT=${VARIANT:-cuda}
+      - GIT_NAME=${GIT_NAME}
     container_name: ray-head
     network_mode: host
     command:
