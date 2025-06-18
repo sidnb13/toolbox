@@ -303,12 +303,18 @@ def connect(
 
     # Add Python version to environment if specified
     if python_version:
-        if not re.match(r"^\\d+\\.\\d+\\.\\d+$", python_version):
+        if not re.match(r"^\d+\.\d+\.\d+$", python_version):
             raise click.ClickException(
                 "Please specify the full Python version, e.g., 3.11.12"
             )
         env_updates["PYTHON_VERSION"] = python_version
         logger.info(f"Setting Python version to {python_version}")
+        # Strip to major.minor for main container build
+        python_version_major_minor = ".".join(python_version.split(".")[:2])
+        python_version_raw = python_version  # Keep full version for Ray
+    else:
+        python_version_major_minor = None
+        python_version_raw = None
 
     # Add variant to environment if specified
     if variant:
@@ -344,7 +350,9 @@ def connect(
         )
 
     # Ensure Ray head node is running with explicit parameters
-    ensure_ray_head_node(remote_config, python_version)
+    ensure_ray_head_node(
+        remote_config, python_version_raw
+    )  # Use full/raw version for Ray
 
     # Store only the Ray dashboard port
     db.upsert_remote(
@@ -365,6 +373,7 @@ def connect(
         host_ray_dashboard_port=host_ray_dashboard_port,
         branch_name=branch_name,
         network_mode=network_mode,
+        python_version=python_version_major_minor,  # Use major.minor for main container
     )
 
     cmd = f"cd ~/projects/{project_name} && docker exec -it -w /workspace/{project_name} {container_name} zsh"

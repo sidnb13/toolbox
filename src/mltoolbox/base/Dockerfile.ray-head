@@ -1,7 +1,5 @@
-ARG PYTHON_VERSION=3.12.12
-ARG VARIANT=cuda
-ARG GIT_NAME=yourgithubusername
-FROM ghcr.io/${GIT_NAME}/ml-base:py${PYTHON_VERSION}-${VARIANT}
+ARG PYTHON_VERSION=3.11.12
+FROM python:${PYTHON_VERSION:-3.11.12}-slim
 
 # Set noninteractive installation and UTF-8 locale
 ENV DEBIAN_FRONTEND=noninteractive

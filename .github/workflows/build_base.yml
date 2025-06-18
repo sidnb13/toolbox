@@ -29,23 +29,23 @@ jobs:
       matrix:
         include:
           # Regular CUDA builds on x64 runners
-          - python_version: "3.10.12"
+          - python_version: "3.10"
             cuda_version: "12.6.3"
             arch: "linux/amd64"
             variant: "cuda"
             runner: "ubuntu-latest"
-          - python_version: "3.11.12"
+          - python_version: "3.11"
             cuda_version: "12.6.3"
             arch: "linux/amd64"
             variant: "cuda"
             runner: "ubuntu-latest"
-          - python_version: "3.12.2"
+          - python_version: "3.12"
             cuda_version: "12.6.3"
             arch: "linux/amd64"
             variant: "cuda"
             runner: "ubuntu-latest"
           # GH200 build on ARM64 runner
-          - python_version: "3.10.12"
+          - python_version: "3.10"
             arch: "linux/arm64"
             variant: "gh200"
             runner: "ubuntu-22.04-arm"

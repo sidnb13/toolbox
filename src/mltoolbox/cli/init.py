@@ -20,9 +20,8 @@ from mltoolbox.utils.templates import generate_project_files
 )
 @click.option(
     "--python-version",
-    default="3.12",
-    type=click.Choice(["3.10", "3.11", "3.12"]),
-    help="Python version to use",
+    default="3.12.12",
+    help="Python version to use (e.g., 3.11.12)",
 )
 @click.option(
     "--variant",
@@ -35,7 +34,7 @@ def init(
     ray: bool,
     force: bool = False,
     inside_project: bool = False,
-    python_version: str = "3.12",
+    python_version: str = "3.12.12",
     variant: str = "cuda",
     ssh_key_name: str = "id_ed25519",
 ):
@@ -44,6 +43,8 @@ def init(
         raise click.ClickException(
             "Please specify the full Python version, e.g., 3.11.12"
         )
+    # Strip to major.minor for main container build
+    python_version_major_minor = ".".join(python_version.split(".")[:2])
     load_dotenv(".env")
     project_dir = Path(project_name) if not inside_project else Path.cwd()
     project_name = project_dir.name
@@ -97,7 +98,7 @@ def init(
         project_name=project_name,
         ray=ray,
         env_vars=template_env,
-        python_version=python_version,
+        python_version=python_version_major_minor,  # Use major.minor for main container
         variant=variant,
     )
 

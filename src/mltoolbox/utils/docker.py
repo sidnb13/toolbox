@@ -175,6 +175,7 @@ def start_container(
     branch_name: str | None = None,
     network_mode: str | None = None,  # Add this parameter
     dryrun: bool = False,
+    python_version: str | None = None,
 ) -> None:
     logger = get_logger()
     if dryrun:
@@ -254,6 +255,9 @@ def start_container(
 
     env_vars = update_env_file(remote_config, project_name, env_updates)
 
+    if python_version:
+        env_vars["PYTHON_VERSION"] = python_version
+
     # Store only dashboard port in database
     if remote_config:
         db = DB()
@@ -275,6 +279,7 @@ def start_container(
     if remote_config:
         # For remote, prepend env vars to the command
         env_string = " ".join([f"{k}={v}" for k, v in env_vars.items()])
+
         base_cmd = f"{env_string} docker compose up -d"
         if build:
             base_cmd += " --build"
