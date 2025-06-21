@@ -2,6 +2,9 @@ from __future__ import annotations  # noqa: INP001
 
 import os
 import subprocess
+import time
+from importlib.resources import files
+from pathlib import Path
 
 import click
 
@@ -10,6 +13,292 @@ from mltoolbox.utils.remote import update_env_file
 
 from .helpers import RemoteConfig, remote_cmd
 from .logger import get_logger
+
+
+def ensure_ray_head_node(remote_config: RemoteConfig | None, python_version: str):
+    """Ensure Ray head node is running on the remote host.
+
+    Args:
+        remote_config: Remote configuration for connection
+        git_name: GitHub username for container image
+        python_version: Python version to use (e.g., "3.12")
+        variant: Base image variant to use (e.g., "cuda", "gh200")
+    """
+    logger = get_logger()
+
+    if not remote_config:
+        return
+
+    # Check NVIDIA Container Toolkit before building containers
+    check_nvidia_container_toolkit(remote_config, variant="cuda")
+
+    # Check if Ray head is running (try to connect to port 6379)
+    result = remote_cmd(
+        remote_config,
+        ["nc -z localhost 6379 2>/dev/null || echo 'not_running'"],
+        use_working_dir=False,
+    )
+
+    if "not_running" in result.stdout:
+        logger.step("Starting Ray head node on remote host")
+
+        # Get paths for Ray head files
+        temp_files_to_cleanup = []
+
+        # Use modern importlib.resources
+        ray_head_compose_content = (
+            files("mltoolbox") / "base" / "docker-compose-ray-head.yml"
+        ).read_bytes()
+        ray_head_dockerfile_content = (
+            files("mltoolbox") / "base" / "Dockerfile.ray-head"
+        ).read_bytes()
+
+        # Create temporary files
+        import tempfile
+
+        ray_head_compose = Path(tempfile.mktemp(suffix=".yml"))
+        ray_head_dockerfile = Path(tempfile.mktemp(suffix=".dockerfile"))
+        temp_files_to_cleanup.extend([ray_head_compose, ray_head_dockerfile])
+
+        ray_head_compose.write_bytes(ray_head_compose_content)
+        ray_head_dockerfile.write_bytes(ray_head_dockerfile_content)
+
+        try:
+            # Create directory for compose file
+            remote_cmd(
+                remote_config,
+                ["mkdir -p ~/ray"],
+                use_working_dir=False,
+            )
+
+            # Copy files to remote
+            subprocess.run(
+                [
+                    "scp",
+                    str(ray_head_compose),
+                    f"{remote_config.username}@{remote_config.host}:~/ray/docker-compose.yml",
+                ],
+                check=False,  # Changed from check=True to handle potential errors gracefully
+            )
+
+            subprocess.run(
+                [
+                    "scp",
+                    str(ray_head_dockerfile),
+                    f"{remote_config.username}@{remote_config.host}:~/ray/Dockerfile.ray-head",
+                ],
+                check=False,  # Changed from check=True to handle potential errors gracefully
+            )
+
+            # Start the Ray head node with docker compose, with explicit error handling
+            try:
+                remote_cmd(
+                    remote_config,
+                    [
+                        f"cd ~/ray && PYTHON_VERSION={python_version} DOCKER_BUILDKIT=0 docker compose up -d"
+                    ],  # Added DOCKER_BUILDKIT=0
+                    use_working_dir=False,
+                )
+            except Exception as e:
+                logger.warning(f"Initial Ray head node start failed: {e}")
+                logger.step("Cleaning Docker cache and retrying")
+
+                # Clean Docker cache and retry with --no-cache
+                try:
+                    remote_cmd(
+                        remote_config,
+                        ["docker system prune -f"],
+                        use_working_dir=False,
+                    )
+                    logger.success("Docker cache cleaned")
+                except Exception as cleanup_error:
+                    logger.warning(f"Cache cleanup failed: {cleanup_error}")
+
+                logger.step("Retrying build without cache")
+                # Retry with --no-cache if first attempt fails
+                remote_cmd(
+                    remote_config,
+                    [
+                        f"cd ~/ray && DOCKER_BUILDKIT=0 PYTHON_VERSION={python_version} docker compose build --no-cache && docker compose up -d"
+                    ],
+                    use_working_dir=False,
+                )
+
+            # Wait for Ray to be ready
+            with logger.spinner("Waiting for Ray head node to be ready"):
+                for _ in range(10):
+                    time.sleep(2)
+                    result = remote_cmd(
+                        remote_config,
+                        ["nc -z localhost 6379 2>/dev/null || echo 'not_running'"],
+                        use_working_dir=False,
+                    )
+                    if "not_running" not in result.stdout:
+                        logger.success("Ray head node is ready")
+                        break
+                else:
+                    logger.warning(
+                        "Ray head node not responding after timeout, continuing anyway"
+                    )
+        finally:
+            # Clean up temporary files
+            for temp_file in temp_files_to_cleanup:
+                try:
+                    if temp_file.exists():
+                        temp_file.unlink()
+                except Exception:
+                    pass  # Ignore cleanup errors
+
+
+def check_nvidia_container_toolkit(
+    remote: RemoteConfig, skip_gpu_check: bool = False, variant: str = "cuda"
+) -> None:
+    """Check if NVIDIA Container Toolkit is properly installed and configured using official NVIDIA docs."""
+    logger = get_logger()
+
+    # Skip GPU check for non-GPU variants
+    if skip_gpu_check or variant not in ["cuda", "gh200"]:
+        logger.info(
+            f"Skipping NVIDIA Container Toolkit check (variant: {variant}, GPU not required)"
+        )
+        return
+
+    # 1. Try the official GPU test first
+    if test_gpu_access(remote, skip_gpu_check=variant not in ["cuda", "gh200"]):
+        logger.success("NVIDIA Container Toolkit and GPU access already working.")
+        return
+
+    try:
+        # Check if NVIDIA drivers are available
+        try:
+            nvidia_smi_result = remote_cmd(
+                remote, ["nvidia-smi --query-gpu=name --format=csv,noheader,nounits"]
+            )
+            gpu_count = (
+                len(nvidia_smi_result.stdout.strip().split("\n"))
+                if nvidia_smi_result.stdout.strip()
+                else 0
+            )
+            logger.info(f"Detected {gpu_count} NVIDIA GPU(s)")
+        except Exception:
+            logger.warning("No NVIDIA GPUs detected or nvidia-smi not available")
+            return
+
+        # Detect OS
+        os_result = remote_cmd(
+            remote, ["cat /etc/os-release | grep '^ID=' | cut -d'=' -f2 | tr -d '\"'"]
+        )
+        os_id = os_result.stdout.strip()
+
+        # Install NVIDIA Container Toolkit using official steps
+        if os_id in ["ubuntu", "debian"]:
+            logger.info(
+                "Installing NVIDIA Container Toolkit on Ubuntu/Debian (official method)"
+            )
+            # Add NVIDIA GPG key and repo (official multi-line command)
+            remote_cmd(
+                remote,
+                [
+                    "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && "
+                    "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | "
+                    "sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | "
+                    "sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list"
+                ],
+            )
+            # Update and install with version pinning
+            remote_cmd(
+                remote,
+                ["sudo apt-get update"],
+            )
+            remote_cmd(
+                remote,
+                [
+                    "export NVIDIA_CONTAINER_TOOLKIT_VERSION=1.17.8-1 && "
+                    "sudo apt-get install -y "
+                    "nvidia-container-toolkit=${NVIDIA_CONTAINER_TOOLKIT_VERSION} "
+                    "nvidia-container-toolkit-base=${NVIDIA_CONTAINER_TOOLKIT_VERSION} "
+                    "libnvidia-container-tools=${NVIDIA_CONTAINER_TOOLKIT_VERSION} "
+                    "libnvidia-container1=${NVIDIA_CONTAINER_TOOLKIT_VERSION}"
+                ],
+            )
+            # Configure Docker to use NVIDIA runtime (official method)
+            remote_cmd(remote, ["sudo nvidia-ctk runtime configure --runtime=docker"])
+            remote_cmd(remote, ["sudo systemctl restart docker"])
+        elif os_id in ["centos", "rhel", "rocky", "almalinux", "fedora"]:
+            logger.info(
+                "Installing NVIDIA Container Toolkit on RHEL/CentOS/Fedora (official method)"
+            )
+            remote_cmd(
+                remote,
+                [
+                    "curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | "
+                    "sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo"
+                ],
+            )
+            remote_cmd(
+                remote,
+                [
+                    "sudo yum install -y nvidia-container-toolkit nvidia-container-toolkit-base libnvidia-container-tools libnvidia-container1"
+                ],
+            )
+        elif os_id in ["opensuse", "sles"]:
+            logger.info(
+                "Installing NVIDIA Container Toolkit on OpenSUSE/SLE (official method)"
+            )
+            remote_cmd(
+                remote,
+                [
+                    "sudo zypper ar https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo"
+                ],
+            )
+            remote_cmd(
+                remote,
+                [
+                    "sudo zypper --gpg-auto-import-keys install -y nvidia-container-toolkit nvidia-container-toolkit-base libnvidia-container-tools libnvidia-container1"
+                ],
+            )
+        else:
+            logger.warning(
+                f"Unsupported OS: {os_id}. Please install NVIDIA Container Toolkit manually."
+            )
+            return
+
+        # Test the installation
+        logger.step("Testing NVIDIA Container Toolkit installation (official method)")
+        test_gpu_access(remote, skip_gpu_check=variant not in ["cuda", "gh200"])
+
+    except Exception as e:
+        logger.error(f"NVIDIA Container Toolkit check failed: {e}")
+        logger.warning("Continuing without NVIDIA Container Toolkit verification")
+
+
+def test_gpu_access(remote: RemoteConfig, skip_gpu_check: bool = False) -> bool:
+    """Test if GPU access is working in containers using the official NVIDIA test command."""
+    logger = get_logger()
+    if skip_gpu_check:
+        logger.info("Skipping GPU access test (GPU not required)")
+        return True
+    try:
+        result = remote_cmd(
+            remote,
+            [
+                "sudo docker run --rm --runtime=nvidia --gpus all ubuntu nvidia-smi --query-gpu=name --format=csv,noheader"
+            ],
+        )
+        gpu_names = [
+            line.strip() for line in result.stdout.splitlines() if line.strip()
+        ]
+        if gpu_names:
+            logger.success(
+                f"GPU access in Docker container verified! Detected {len(gpu_names)} GPU(s): {', '.join(gpu_names)}"
+            )
+            return True
+        else:
+            logger.error("No GPUs detected in container. GPU access failed.")
+            return False
+    except Exception as e:
+        logger.error(f"GPU access check failed: {e}")
+        return False
 
 
 def check_docker_group(remote: RemoteConfig) -> None:
@@ -176,6 +465,7 @@ def start_container(
     network_mode: str | None = None,  # Add this parameter
     dryrun: bool = False,
     python_version: str | None = None,
+    variant: str = "cuda",  # Add variant parameter
 ) -> None:
     logger = get_logger()
     if dryrun:
@@ -187,6 +477,10 @@ def start_container(
             )
         logger.success("[DRY RUN] Container start simulated.")
         return
+
+    # Check NVIDIA Container Toolkit before starting containers
+    if remote_config:
+        check_nvidia_container_toolkit(remote_config, variant=variant)
 
     def cmd_wrap(cmd):
         if remote_config:
@@ -279,6 +573,7 @@ def start_container(
     if remote_config:
         # For remote, prepend env vars to the command
         env_string = " ".join([f"{k}={v}" for k, v in env_vars.items()])
+        env_string = f"COMPOSE_BAKE=true {env_string}"  # Always set COMPOSE_BAKE
 
         base_cmd = f"{env_string} docker compose up -d"
         if build:
@@ -291,6 +586,8 @@ def start_container(
         cmd_wrap([base_cmd])
     else:
         # For local, use environment parameter
+        env_vars = env_vars.copy()
+        env_vars["COMPOSE_BAKE"] = "true"
         base_cmd = ["docker", "compose", "up", "-d"]
         if build:
             base_cmd.append("--build")

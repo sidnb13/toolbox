@@ -73,6 +73,15 @@ def remote_cmd(
     actual_username = ssh_config.get("user", config.username)
     identity_file = ssh_config.get("identityfile", [None])[0]
 
+    # Prepare command string for logging
+    cmd_str = " ".join(command) if isinstance(command, list) else str(command)
+    if config.working_dir and use_working_dir:
+        full_cmd = (
+            f"mkdir -p {config.working_dir} && cd {config.working_dir} && {cmd_str}"
+        )
+    else:
+        full_cmd = cmd_str
+
     # Only show command details in debug mode
     if logger.logger.level <= 10:  # DEBUG level
         logger.debug(f"Executing remote command: {command}")
@@ -90,7 +99,14 @@ def remote_cmd(
 
     try:
         start_time = time.time()
-        with logger.spinner(f"Executing command on {config.host}"):
+        # Truncate command for display if too long
+        display_cmd = full_cmd
+        max_cmd_length = 80  # Reasonable terminal width
+        if len(display_cmd) > max_cmd_length:
+            display_cmd = display_cmd[: max_cmd_length - 3] + "..."
+
+        spinner_msg = f"Executing on {actual_username}@{actual_hostname}: {display_cmd}"
+        with logger.spinner(spinner_msg):
             if reload_session:
                 ssh = session_manager.reload_session(
                     actual_hostname, actual_username, **connect_kwargs
@@ -103,12 +119,6 @@ def remote_cmd(
                 )
             _, stdout, _ = ssh.exec_command("pwd")
             remote_cwd = stdout.read().decode().strip()
-            # Prepare command string
-            cmd_str = " ".join(command) if isinstance(command, list) else command
-            if config.working_dir and use_working_dir:
-                full_cmd = f"mkdir -p {config.working_dir} && cd {config.working_dir} && {cmd_str}"
-            else:
-                full_cmd = cmd_str
             # Execute command with PTY
             transport = ssh.get_transport()
             channel = transport.open_session()

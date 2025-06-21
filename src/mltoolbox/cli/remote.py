@@ -11,13 +11,14 @@ from mltoolbox.utils.db import DB, Remote
 from mltoolbox.utils.docker import (
     RemoteConfig,
     check_docker_group,
+    check_nvidia_container_toolkit,
+    ensure_ray_head_node,
     find_available_port,
     start_container,
 )
 from mltoolbox.utils.helpers import remote_cmd
 from mltoolbox.utils.remote import (
     build_rclone_cmd,
-    ensure_ray_head_node,
     fetch_remote,
     run_rclone_sync,
     setup_rclone,
@@ -36,11 +37,6 @@ db = DB()
 def remote():
     """Manage remote development environment."""
     load_dotenv(".env")
-
-
-@remote.command()
-def provision():
-    raise click.ClickException("Not implemented yet")
 
 
 @remote.command()
@@ -125,6 +121,14 @@ def connect(
 ):
     """Connect to remote development environment."""
     dryrun = ctx.obj.get("dryrun", False)
+
+    # Validate Python version early if specified
+    if python_version:
+        if not re.match(r"^\d+\.\d+\.\d+$", python_version):
+            raise click.ClickException(
+                "Please specify the full Python version, e.g., 3.11.12"
+            )
+
     # Validate host IP address format
     ip_pattern = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
     if not re.match(ip_pattern, host_or_alias):
@@ -261,9 +265,13 @@ def connect(
     if not dryrun:
         check_docker_group(remote_config)
         logger.success("Docker group checked")
+        check_nvidia_container_toolkit(remote_config, variant=variant or "cuda")
+        logger.success("NVIDIA Container Toolkit checked")
     else:
         logger.info("[DRYRUN] Would check Docker group (skipped)")
         logger.success("[DRYRUN] Docker group checked (simulated)")
+        logger.info("[DRYRUN] Would check NVIDIA Container Toolkit (skipped)")
+        logger.success("[DRYRUN] NVIDIA Container Toolkit checked (simulated)")
 
     # First ensure remote directory exists
     if not dryrun:
@@ -303,10 +311,6 @@ def connect(
 
     # Add Python version to environment if specified
     if python_version:
-        if not re.match(r"^\d+\.\d+\.\d+$", python_version):
-            raise click.ClickException(
-                "Please specify the full Python version, e.g., 3.11.12"
-            )
         env_updates["PYTHON_VERSION"] = python_version
         logger.info(f"Setting Python version to {python_version}")
         # Strip to major.minor for main container build
@@ -374,6 +378,7 @@ def connect(
         branch_name=branch_name,
         network_mode=network_mode,
         python_version=python_version_major_minor,  # Use major.minor for main container
+        variant=variant or "cuda",
     )
 
     cmd = f"cd ~/projects/{project_name} && docker exec -it -w /workspace/{project_name} {container_name} zsh"
