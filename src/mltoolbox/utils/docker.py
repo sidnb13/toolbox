@@ -199,7 +199,7 @@ def check_nvidia_container_toolkit(
             remote_cmd(
                 remote,
                 [
-                    "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && "
+                    "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && "
                     "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | "
                     "sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | "
                     "sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list"
@@ -282,7 +282,7 @@ def test_gpu_access(remote: RemoteConfig, skip_gpu_check: bool = False) -> bool:
         result = remote_cmd(
             remote,
             [
-                "sudo docker run --rm --runtime=nvidia --gpus all ubuntu nvidia-smi --query-gpu=name --format=csv,noheader"
+                "sudo docker run --rm --gpus all ubuntu nvidia-smi --query-gpu=name --format=csv,noheader"
             ],
         )
         gpu_names = [

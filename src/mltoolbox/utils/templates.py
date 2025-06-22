@@ -107,26 +107,6 @@ def render_template(template_name: str, **kwargs) -> str:
     return template.render(**kwargs)
 
 
-def copy_base_pyproject(
-    project_dir: Path, project_name: str = "ml-project", **kwargs
-) -> None:
-    """Generate pyproject.toml from template if it doesn't exist"""
-    project_pyproject = project_dir / "pyproject.toml"
-
-    if not project_pyproject.exists():
-        # Use the Jinja2 template to generate pyproject.toml
-        context = {
-            "project_name": project_name,
-            "version": "0.1.0",
-            "description": "ML project",
-            "python_version": "3.9",
-            **kwargs,
-        }
-
-        pyproject_content = render_template("pyproject.toml.j2", **context)
-        project_pyproject.write_text(pyproject_content)
-
-
 def generate_project_files(
     project_dir: Path,
     project_name: str,
@@ -212,11 +192,3 @@ def generate_project_files(
             if " " in str(value):
                 value = f'"{value}"'
             f.write(f"{key}={value}\n")
-
-    # Generate pyproject.toml from template if it doesn't exist
-    copy_base_pyproject(
-        project_dir,
-        project_name=project_name.lower(),
-        python_version=python_version,
-        ray=ray,
-    )
