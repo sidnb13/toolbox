@@ -72,23 +72,27 @@ def ensure_ray_head_node(remote_config: RemoteConfig | None, python_version: str
             )
 
             # Copy files to remote
-            subprocess.run(
+            scp_cmd1 = ["scp"]
+            if remote_config.port:
+                scp_cmd1.extend(["-P", str(remote_config.port)])
+            scp_cmd1.extend(
                 [
-                    "scp",
                     str(ray_head_compose),
                     f"{remote_config.username}@{remote_config.host}:~/ray/docker-compose.yml",
-                ],
-                check=False,  # Changed from check=True to handle potential errors gracefully
+                ]
             )
+            subprocess.run(scp_cmd1, check=False)
 
-            subprocess.run(
+            scp_cmd2 = ["scp"]
+            if remote_config.port:
+                scp_cmd2.extend(["-P", str(remote_config.port)])
+            scp_cmd2.extend(
                 [
-                    "scp",
                     str(ray_head_dockerfile),
                     f"{remote_config.username}@{remote_config.host}:~/ray/Dockerfile.ray-head",
-                ],
-                check=False,  # Changed from check=True to handle potential errors gracefully
+                ]
             )
+            subprocess.run(scp_cmd2, check=False)
 
             # Start the Ray head node with docker compose, with explicit error handling
             try:

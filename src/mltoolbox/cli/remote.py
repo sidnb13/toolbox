@@ -100,6 +100,9 @@ def remote():
     default=None,
     help="Identity file to use for SSH connection (e.g., '~/.ssh/id_ed25519')",
 )
+@click.option(
+    "--port", "-P", default=None, type=int, help="SSH port to use (default 22)"
+)
 @click.pass_context
 def connect(
     ctx,
@@ -118,6 +121,7 @@ def connect(
     variant,
     dependency_tags,
     identity_file,
+    port,
 ):
     """Connect to remote development environment."""
     dryrun = ctx.obj.get("dryrun", False)
@@ -160,9 +164,11 @@ def connect(
             branch_name = None
 
     # Get or create/update remote and project
+    if not host:
+        raise click.ClickException("Host must be specified and not None.")
     remote = db.upsert_remote(
         username=username,
-        host=host,
+        host=str(host),
         project_name=project_name,
         container_name=container_name,
         alias=alias,
@@ -170,7 +176,7 @@ def connect(
         identity_file=identity_file,
     )
 
-    if not dryrun and not wait_for_host(remote.host, timeout, username):
+    if not dryrun and not wait_for_host(remote.host, timeout, username, port):
         raise click.ClickException(
             f"Timeout waiting for host {remote.host} after {timeout} seconds"
         )
@@ -184,7 +190,10 @@ def connect(
         host=remote.host,
         username=remote.username,
         working_dir=f"~/projects/{project_name}",
-        identity_file=remote.identity_file or Path.home() / ".ssh/id_ed25519",
+        identity_file=str(remote.identity_file)
+        if remote.identity_file
+        else str(Path.home() / ".ssh/id_ed25519"),
+        port=port,
     )
 
     # create custom ssh config if not exists
@@ -354,8 +363,10 @@ def connect(
         )
 
     # Ensure Ray head node is running with explicit parameters
+    if python_version_raw is None:
+        python_version_raw = "3.8.0"  # fallback default
     ensure_ray_head_node(
-        remote_config, python_version_raw
+        remote_config, str(python_version_raw)
     )  # Use full/raw version for Ray
 
     # Store only the Ray dashboard port
@@ -400,6 +411,10 @@ def connect(
     # Add identity file if specified
     if remote.identity_file:
         ssh_args.extend(["-i", remote.identity_file])
+
+    # Add port if specified
+    if port:
+        ssh_args.extend(["-p", str(port)])
 
     # Print URL information to console
     logger.section("Service URLs")
@@ -470,11 +485,22 @@ def remove(host_or_alias: str):
     default="",
     help="Comma-separated patterns to exclude (e.g., 'checkpoints,wandb')",
 )
-def sync(host_or_alias, exclude):
+@click.option(
+    "--port", "-P", default=None, type=int, help="SSH port to use (default 22)"
+)
+def sync(host_or_alias, exclude, port):
     """Sync project files with remote host."""
     project_name = Path.cwd().name
     remote = db.get_remote_fuzzy(host_or_alias)
-    remote_config = RemoteConfig(host=remote.host, username=remote.username)
+    if (
+        not remote
+        or not getattr(remote, "host", None)
+        or not getattr(remote, "username", None)
+    ):
+        raise click.ClickException(
+            f"Remote '{host_or_alias}' not found or missing host/username."
+        )
+    remote_config = RemoteConfig(host=remote.host, username=remote.username, port=port)
 
     sync_project(remote_config, project_name, exclude=exclude)
     from mltoolbox.utils.logger import get_logger
@@ -502,12 +528,22 @@ def sync(host_or_alias, exclude):
     "--main-repo",
     help="Name of the main repository (for worktree setup)",
 )
-def fetch(host_or_alias, remote_path, local_path, exclude, main_repo):
+@click.option(
+    "--port", "-P", default=None, type=int, help="SSH port to use (default 22)"
+)
+def fetch(host_or_alias, remote_path, local_path, exclude, main_repo, port):
     """Fetch files/directories from remote host to local."""
     exclude_patterns = exclude.split(",") if exclude else []
-
     remote = db.get_remote_fuzzy(host_or_alias)
-    remote_config = RemoteConfig(host=remote.host, username=remote.username)
+    if (
+        not remote
+        or not getattr(remote, "host", None)
+        or not getattr(remote, "username", None)
+    ):
+        raise click.ClickException(
+            f"Remote '{host_or_alias}' not found or missing host/username."
+        )
+    remote_config = RemoteConfig(host=remote.host, username=remote.username, port=port)
 
     # Normal fetch without worktree handling
     fetch_remote(
@@ -592,6 +628,9 @@ def fetch(host_or_alias, remote_path, local_path, exclude, main_repo):
     default=True,
     help="Enable/disable verbose output",
 )
+@click.option(
+    "--port", "-P", default=None, type=int, help="SSH port to use (default 22)"
+)
 def datasync(
     direction,
     host_or_alias,
@@ -608,6 +647,7 @@ def datasync(
     username,
     dry_run,
     verbose,
+    port,
 ):
     """Sync data between local, remote host, and cloud storage using rclone.
 
@@ -651,11 +691,17 @@ def datasync(
             r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$",
             host_or_alias,
         ):
-            # Direct IP address
             host = host_or_alias
         else:
-            # Alias - look up in database
             remote = db.get_remote_fuzzy(host_or_alias)
+            if (
+                not remote
+                or not getattr(remote, "host", None)
+                or not getattr(remote, "username", None)
+            ):
+                raise click.ClickException(
+                    f"Remote '{host_or_alias}' not found or missing host/username."
+                )
             host = remote.host
             username = remote.username
 
@@ -663,6 +709,7 @@ def datasync(
             host=host,
             username=username,
             working_dir=f"~/projects/{project_name}",
+            port=port,
         )
 
     # Ensure local directory exists when in local mode
@@ -699,6 +746,8 @@ def datasync(
 
     elif mode == "host":
         # Ensure rclone is set up on remote
+        if remote_config is None:
+            raise click.ClickException("Remote config is required for host mode.")
         setup_rclone(remote_config)
 
         # Run on remote host
@@ -711,6 +760,8 @@ def datasync(
         if direction == "down" and not dest_dir.startswith(
             ("gdrive:", "gdbackup:", "s3:", "b2:")
         ):
+            if remote_config is None:
+                raise click.ClickException("Remote config is required for host mode.")
             remote_cmd(
                 remote_config,
                 [f"mkdir -p {dest_dir}"],
@@ -730,6 +781,8 @@ def datasync(
         )
 
         # Execute on remote host
+        if remote_config is None:
+            raise click.ClickException("Remote config is required for host mode.")
         remote_cmd(
             remote_config,
             [" ".join(rclone_cmd)],
@@ -757,6 +810,8 @@ def datasync(
 
         # Execute inside container
         docker_cmd = f"cd ~/projects/{project_name} && docker compose exec {container_name} {' '.join(rclone_cmd)}"
+        if remote_config is None:
+            raise click.ClickException("Remote config is required for container mode.")
         remote_cmd(
             remote_config,
             [docker_cmd],

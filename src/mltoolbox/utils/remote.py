@@ -42,16 +42,20 @@ def setup_rclone(remote_config: RemoteConfig) -> None:
 
     # Use scp to copy rclone config
     try:
-        subprocess.run(
+        scp_cmd = [
+            "scp",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+        ]
+        if remote_config.port:
+            scp_cmd.extend(["-P", str(remote_config.port)])
+        scp_cmd.extend(
             [
-                "scp",
-                "-o",
-                "StrictHostKeyChecking=accept-new",
                 str(local_rclone_config),
                 f"{remote_config.username}@{remote_config.host}:~/.config/rclone/rclone.conf",
-            ],
-            check=True,
+            ]
         )
+        subprocess.run(scp_cmd, check=True)
         logger.success("Rclone config synced successfully")
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to sync rclone config: {e}")
@@ -191,7 +195,10 @@ def setup_remote_ssh_keys(remote_config: RemoteConfig, ssh_key_name: str = None)
 
 
 def wait_for_host(
-    host: str, timeout: int | None = None, username: str = "ubuntu"
+    host: str,
+    timeout: int | None = None,
+    username: str = "ubuntu",
+    port: int | None = None,
 ) -> bool:
     """Wait for host to become available by checking both ping and SSH connectivity.
 
@@ -199,6 +206,7 @@ def wait_for_host(
         host: Hostname or IP address to check
         timeout: Maximum time to wait in seconds, None for infinite
         username: Remote username to use for SSH connection (default: "ubuntu")
+        port: SSH port to use (default: None, which means 22)
 
     Returns:
         bool: True if host becomes available, False if timeout reached
@@ -209,7 +217,7 @@ def wait_for_host(
     def time_exceeded() -> bool:
         return timeout and (time.time() - start_time) > timeout
 
-    remote_config = RemoteConfig(host=host, username=username)
+    remote_config = RemoteConfig(host=host, username=username, port=port)
 
     with logger.spinner(f"Waiting for host {host} to become available"):
         while not time_exceeded():
@@ -349,16 +357,20 @@ def sync_project(
         for key_file in [ssh_key_name, f"{ssh_key_name}.pub"]:
             try:
                 # Use scp for direct file copy
-                subprocess.run(
+                scp_cmd = [
+                    "scp",
+                    "-o",
+                    "StrictHostKeyChecking=accept-new",
+                ]
+                if remote_config.port:
+                    scp_cmd.extend(["-P", str(remote_config.port)])
+                scp_cmd.extend(
                     [
-                        "scp",
-                        "-o",
-                        "StrictHostKeyChecking=accept-new",
                         str(local_ssh_dir / key_file),
                         f"{remote_config.username}@{remote_config.host}:~/.ssh/{key_file}",
-                    ],
-                    check=True,
+                    ]
                 )
+                subprocess.run(scp_cmd, check=True)
                 logger.success(f"Copied SSH key {key_file} to remote host")
             except Exception as e:
                 logger.warning(f"Failed to sync {key_file}: {e}")
@@ -368,16 +380,20 @@ def sync_project(
     if local_env_file.exists():
         logger.step("Syncing .env file separately to ensure it's transferred")
         try:
-            subprocess.run(
+            scp_cmd = [
+                "scp",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+            ]
+            if remote_config.port:
+                scp_cmd.extend(["-P", str(remote_config.port)])
+            scp_cmd.extend(
                 [
-                    "scp",
-                    "-o",
-                    "StrictHostKeyChecking=accept-new",
                     str(local_env_file),
                     f"{remote_config.username}@{remote_config.host}:~/projects/{remote_path or project_name}/.env",
-                ],
-                check=True,
+                ]
             )
+            subprocess.run(scp_cmd, check=True)
             logger.success(".env file synced successfully")
         except Exception as e:
             logger.warning(f"Failed to sync .env file: {e}")
@@ -413,6 +429,9 @@ def sync_project(
     all_excludes = default_excludes + (exclude.split(",") if exclude else [])
 
     # Build rsync command
+    ssh_cmd = "ssh"
+    if remote_config.port:
+        ssh_cmd = f"ssh -p {remote_config.port}"
     rsync_cmd = [
         "rsync",
         "-avz",  # archive, verbose, compress
@@ -423,7 +442,7 @@ def sync_project(
         "--ignore-errors",  # Delete even if there are I/O errors
         "--chmod=Du=rwx,go=rx,Fu=rw,go=r",  # Set sane permissions
         "-e",
-        "ssh -o StrictHostKeyChecking=no",  # Less strict SSH checking
+        ssh_cmd,
     ]
 
     # Add exclude patterns
@@ -503,10 +522,15 @@ def fetch_remote(
     local_dir.parent.mkdir(parents=True, exist_ok=True)
 
     # Build rsync command
+    ssh_cmd = "ssh"
+    if remote_config.port:
+        ssh_cmd = f"ssh -p {remote_config.port}"
     rsync_cmd = [
         "rsync",
         "-avz",
         "--progress",
+        "-e",
+        ssh_cmd,
     ]
 
     # Add exclude patterns if specified

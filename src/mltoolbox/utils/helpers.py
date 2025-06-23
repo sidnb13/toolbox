@@ -18,14 +18,15 @@ class RemoteConfig:
     ssh_key: str | None = None
     working_dir: str | None = None
     identity_file: str | None = None
+    port: int | None = None
 
 
 def get_ssh_config(
     alias: str,
-    config_path: Path = "~/.config/mltoolbox/ssh/config",
+    config_path: Path = Path("~/.config/mltoolbox/ssh/config"),
 ) -> dict:
     """Parse SSH config and return settings for the given alias."""
-    ssh_config = paramiko.config.SSHConfig()
+    ssh_config = paramiko.SSHConfig()
 
     # Use custom config path if provided, otherwise fallback to default
     config_paths = [
@@ -72,6 +73,12 @@ def remote_cmd(
     actual_hostname = ssh_config.get("hostname", config.host)
     actual_username = ssh_config.get("user", config.username)
     identity_file = ssh_config.get("identityfile", [None])[0]
+    port = config.port or ssh_config.get("port")
+    if port is not None:
+        try:
+            port = int(port)
+        except Exception:
+            port = None
 
     # Prepare command string for logging
     cmd_str = " ".join(command) if isinstance(command, list) else str(command)
@@ -96,6 +103,8 @@ def remote_cmd(
 
     if identity_file:
         connect_kwargs["key_filename"] = identity_file
+    if port:
+        connect_kwargs["port"] = port
 
     try:
         start_time = time.time()
@@ -121,6 +130,8 @@ def remote_cmd(
             remote_cwd = stdout.read().decode().strip()
             # Execute command with PTY
             transport = ssh.get_transport()
+            if transport is None:
+                raise click.ClickException("SSH transport is not available.")
             channel = transport.open_session()
             channel.get_pty()
             channel.exec_command(full_cmd)
