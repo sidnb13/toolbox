@@ -20,6 +20,12 @@ class AsyncOpenAIBackend(AsyncLLMBackend):
             )
         self.client = openai.AsyncOpenAI(api_key=self.api_key)
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        pass
+
     async def complete(self, prompt, model=None):
         model = model or DEFAULT_MODEL
         response = await self.client.chat.completions.create(
@@ -28,6 +34,8 @@ class AsyncOpenAIBackend(AsyncLLMBackend):
             max_tokens=512,
             temperature=0.3,
         )
+        if response is None or not getattr(response, "choices", None):
+            return ""
         return response.choices[0].message.content
 
 
@@ -42,6 +50,12 @@ class AsyncTogetherBackend(AsyncLLMBackend):
             )
         self.client = AsyncTogether(api_key=self.api_key)
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        pass
+
     async def complete(self, prompt, model=None):
         model = model or self.DEFAULT_MODEL
         response = await self.client.chat.completions.create(
@@ -50,7 +64,9 @@ class AsyncTogetherBackend(AsyncLLMBackend):
             max_tokens=512,
             temperature=0.3,
         )
-        return response.choices[0].message.content
+        if response is None or not getattr(response, "choices", None):
+            return ""
+        return response.choices[0].message.content  # type: ignore
 
 
 MODEL_PROVIDER_MAP = {

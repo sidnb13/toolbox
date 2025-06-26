@@ -103,7 +103,7 @@ fi
 
 if command -v ai-commit &>/dev/null; then
     echo "🔧 Running ai-commit install-hook..."
-    ai-commit install-hook
+    ai-commit install-hook || true
 else
     echo "⚠️  ai-commit command not found, skipping AI commit hook installation"
 fi

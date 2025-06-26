@@ -8,6 +8,7 @@ repos:
           - --unsafe-fixes
           - --exit-zero
           - --select=E,F,I,UP
+          - --ignore=E501
         exclude: \.ipynb$
       - id: ruff-format
         exclude: \.ipynb$
@@ -22,3 +23,20 @@ repos:
         types: [python]
         files: .*
         description: "AI-powered commit message generator"
+        # --- ai-commit config options ---
+        # You can set these environment variables to control ai-commit behavior:
+        #   AI_COMMIT_MSG_WORD_LIMIT: Max words for commit message (default: 30)
+        #   AI_COMMIT_MODEL: Model to use (e.g. gpt-4.1-nano)
+        #   AI_COMMIT_EXTRA_CONTEXT: Extra context string to include in prompt
+        #   OPENAI_API_KEY / TOGETHER_API_KEY: Your LLM API key(s)
+        # Example:
+        #   env:
+        #     AI_COMMIT_MSG_WORD_LIMIT: "25"
+        #     AI_COMMIT_MODEL: "gpt-4.1-nano"
+        #     AI_COMMIT_EXTRA_CONTEXT: "This is a research codebase."
+        env:
+          AI_COMMIT_MSG_WORD_LIMIT: "30"
+          # AI_COMMIT_MODEL: "gpt-4.1-nano"
+          # AI_COMMIT_EXTRA_CONTEXT: ""
+          # OPENAI_API_KEY: "..."
+          # TOGETHER_API_KEY: "..."

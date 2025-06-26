@@ -65,7 +65,16 @@ def get_staged_diff():
 
 def main():
     load_dotenv(override=True)
-    asyncio.run(validate_api_key())
+    try:
+        asyncio.run(validate_api_key())
+    except Exception:
+        # Try loading dotenv again if key is missing/invalid
+        load_dotenv(override=True)
+        try:
+            asyncio.run(validate_api_key())
+        except Exception as e2:
+            print(f"Error: API key validation failed after loading .env: {str(e2)}")
+            sys.exit(1)
 
     parser = argparse.ArgumentParser(description="AI-powered commit message generator.")
     parser.add_argument(
@@ -77,6 +86,12 @@ def main():
         "-n",
         action="store_true",
         help="Show what would be committed, but don't actually write the commit message.",
+    )
+    parser.add_argument(
+        "--word-limit",
+        type=int,
+        default=None,
+        help="Word limit for the commit message (overrides AI_COMMIT_MSG_WORD_LIMIT)",
     )
     args, unknown = parser.parse_known_args()
 
@@ -103,7 +118,7 @@ def main():
             print("No staged changes detected.")
             return
         try:
-            commit_message = map_reduce_summarize(diff)
+            commit_message = map_reduce_summarize(diff, word_limit=args.word_limit)
         except Exception as e:
             print(f"[ai-commit-msg] Error during commit message generation: {e}")
             return
@@ -136,7 +151,7 @@ def main():
         print("No staged changes detected.")
         return
     try:
-        commit_message = map_reduce_summarize(diff)
+        commit_message = map_reduce_summarize(diff, word_limit=args.word_limit)
     except Exception as e:
         print(f"[ai-commit-msg] Error during commit message generation: {e}")
         return

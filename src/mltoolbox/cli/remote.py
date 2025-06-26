@@ -816,3 +816,81 @@ def datasync(
             remote_config,
             [docker_cmd],
         )
+
+
+@remote.command()
+@click.argument("host_or_alias")
+@click.option(
+    "--port", "-P", default=None, type=int, help="SSH port to use (default 22)"
+)
+@click.option(
+    "--container-name",
+    default=None,
+    help="Override container name (defaults to project name or CONTAINER_NAME)",
+)
+def attach(host_or_alias, port, container_name):
+    """Attach to a running remote container shell (no sync, no checks, just shell)."""
+    from mltoolbox.utils.logger import get_logger
+
+    logger = get_logger()
+    project_name = Path.cwd().name
+    remote = db.get_remote_fuzzy(host_or_alias)
+    if (
+        not remote
+        or not getattr(remote, "host", None)
+        or not getattr(remote, "username", None)
+    ):
+        raise click.ClickException(
+            f"Remote '{host_or_alias}' not found or missing host/username."
+        )
+    remote_config = RemoteConfig(host=remote.host, username=remote.username, port=port)
+
+    # Determine container name
+    if not container_name:
+        # Try to get from project association
+        container_name = None
+        if hasattr(remote, "projects") and remote.projects:
+            for project in remote.projects:
+                if project.name == project_name:
+                    container_name = project.container_name
+                    break
+        if not container_name:
+            container_name = project_name.lower()
+
+    # Check if container exists and is running
+    check_cmd = [
+        f"docker ps --filter 'name=^{container_name}$' --format '{{{{.Names}}}}'"
+    ]
+    result = remote_cmd(remote_config, check_cmd)
+    running_containers = [
+        line.strip() for line in result.stdout.splitlines() if line.strip()
+    ]
+    if container_name not in running_containers:
+        logger.failure(
+            f"Container '{container_name}' is not running on remote host {remote.host}."
+        )
+        raise click.ClickException(
+            f"Container '{container_name}' is not running on remote host {remote.host}."
+        )
+
+    # Build SSH command to attach
+    cmd = f"cd ~/projects/{project_name} && docker exec -it -w /workspace/{project_name} {container_name} zsh"
+    ssh_args = [
+        "ssh",
+        "-A",
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ExitOnForwardFailure=no",
+        "-o",
+        "ServerAliveInterval=60",
+        "-o",
+        "ServerAliveCountMax=3",
+    ]
+    if remote.identity_file:
+        ssh_args.extend(["-i", remote.identity_file])
+    if port:
+        ssh_args.extend(["-p", str(port)])
+    ssh_args.extend([f"{remote.username}@{remote.host}", "-t", cmd])
+    logger.info(f"Attaching to container '{container_name}' on {remote.host}...")
+    os.execvp("ssh", ssh_args)
