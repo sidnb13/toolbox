@@ -20,7 +20,14 @@ from sqlalchemy import (
     or_,
 )
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    Session,
+    joinedload,
+    mapped_column,
+    relationship,
+)
 
 
 class Base(DeclarativeBase):
@@ -307,9 +314,10 @@ class DB:
 
     def get_remote_fuzzy(self, query: str) -> Remote | None:
         with Session(self.engine) as session:
-            # Search in both alias and host fields
+            # Search in both alias and host fields and eagerly load projects
             return (
                 session.query(Remote)
+                .options(joinedload(Remote.projects))
                 .filter(
                     or_(
                         Remote.alias.ilike(f"%{query}%"),

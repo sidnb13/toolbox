@@ -11,6 +11,181 @@ from .helpers import RemoteConfig, remote_cmd
 from .logger import get_logger
 
 
+def parse_gitignore_patterns(root_path: Path) -> set[str]:
+    """
+    Parse .gitignore file from root directory and return exclusion patterns.
+
+    Note: Only parses the root .gitignore file to avoid issues with nested .gitignore
+    files (e.g., .venv/.gitignore with '*' which would exclude everything).
+
+    Args:
+        root_path: Root directory containing .gitignore
+
+    Returns:
+        Set of exclusion patterns compatible with rsync
+    """
+    patterns = set()
+    gitignore_path = root_path / ".gitignore"
+
+    if not gitignore_path.exists():
+        return patterns
+
+    try:
+        with open(gitignore_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+
+                # Skip empty lines and comments
+                if not line or line.startswith("#"):
+                    continue
+
+                # Handle negation patterns (starting with !)
+                if line.startswith("!"):
+                    # Skip negation patterns as rsync doesn't handle them well
+                    continue
+
+                # Convert gitignore pattern to rsync pattern
+                pattern = convert_gitignore_to_rsync(line, gitignore_path, root_path)
+                if pattern:
+                    patterns.add(pattern)
+
+    except (OSError, UnicodeDecodeError):
+        # Silently skip files that can't be read
+        pass
+
+    return patterns
+
+
+def parse_dockerignore_patterns(root_path: Path) -> set[str]:
+    """
+    Parse .dockerignore file from root directory and return exclusion patterns.
+
+    Note: Only parses the root .dockerignore file.
+
+    Args:
+        root_path: Root directory containing .dockerignore
+
+    Returns:
+        Set of exclusion patterns compatible with rsync
+    """
+    patterns = set()
+    dockerignore_path = root_path / ".dockerignore"
+
+    if not dockerignore_path.exists():
+        return patterns
+
+    try:
+        with open(dockerignore_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+
+                # Skip empty lines and comments
+                if not line or line.startswith("#"):
+                    continue
+
+                # Convert dockerignore pattern to rsync pattern
+                pattern = convert_gitignore_to_rsync(line, dockerignore_path, root_path)
+                if pattern:
+                    patterns.add(pattern)
+
+    except (OSError, UnicodeDecodeError):
+        # Silently skip files that can't be read
+        pass
+
+    return patterns
+
+
+def convert_gitignore_to_rsync(
+    pattern: str, ignore_file_path: Path, root_path: Path
+) -> str:
+    """
+    Convert a gitignore pattern to an rsync-compatible pattern.
+
+    Args:
+        pattern: The gitignore pattern
+        ignore_file_path: Path to the ignore file containing this pattern
+        root_path: Root directory of the project
+
+    Returns:
+        Rsync-compatible pattern or None if conversion fails
+    """
+    # Remove leading slash if present (gitignore treats it as root-relative)
+    if pattern.startswith("/"):
+        pattern = pattern[1:]
+
+    # Skip if pattern is empty after processing
+    if not pattern:
+        return None
+
+    # Handle directory patterns (ending with /)
+    if pattern.endswith("/"):
+        pattern = pattern[:-1]
+        # For directories, we want to exclude the directory and all contents
+        return f"{pattern}/"
+
+    # Handle wildcard patterns
+    if "*" in pattern or "?" in pattern or "[" in pattern:
+        # Convert gitignore wildcards to rsync patterns
+        # gitignore uses ** for recursive matching, rsync uses *
+        pattern = pattern.replace("**", "*")
+        return pattern
+
+    # Handle simple file/directory patterns
+    if "/" in pattern:
+        # Path with directories - use as-is
+        return pattern
+    else:
+        # Simple filename pattern
+        return pattern
+
+
+def get_all_exclusion_patterns(
+    root_path: Path, user_excludes: list = None
+) -> list[str]:
+    """
+    Get all exclusion patterns from gitignore, dockerignore, and user-provided patterns.
+
+    Args:
+        root_path: Root directory to parse ignore files from
+        user_excludes: Additional user-provided exclusion patterns
+
+    Returns:
+        List of all exclusion patterns for rsync
+    """
+    # Default exclusions for temporary/generated files
+    default_excludes = [
+        "__pycache__",
+        "*.pyc",
+        "node_modules",
+        ".venv",
+        "*.egg-info",
+        ".DS_Store",
+        "wandb/",  # Weights & Biases logs
+        "outputs/",  # Common output directory
+        ".vscode-server/",  # VSCode server files
+        "*.swp",  # Vim swap files
+        ".idea/",  # PyCharm files
+        "dist/",  # Python distribution files
+        "build/",  # Build artifacts
+    ]
+
+    # Parse ignore files
+    gitignore_patterns = parse_gitignore_patterns(root_path)
+    dockerignore_patterns = parse_dockerignore_patterns(root_path)
+
+    # Combine all patterns
+    all_patterns = set(default_excludes)
+    all_patterns.update(gitignore_patterns)
+    all_patterns.update(dockerignore_patterns)
+
+    # Add user-provided patterns
+    if user_excludes:
+        all_patterns.update(user_excludes)
+
+    # Convert to list and sort for consistent ordering
+    return sorted(list(all_patterns))
+
+
 def setup_zshrc(remote_config: RemoteConfig):
     """Create a basic .zshrc file if it doesn't exist."""
     remote_cmd(
@@ -236,6 +411,142 @@ def wait_for_host(
     return False
 
 
+def should_exclude(path: Path, root: Path, exclude_patterns: list[str]) -> bool:
+    """
+    Check if a path should be excluded based on exclusion patterns.
+
+    Args:
+        path: Path to check
+        root: Root directory for relative path calculation
+        exclude_patterns: List of exclusion patterns
+
+    Returns:
+        True if path should be excluded, False otherwise
+    """
+    import fnmatch
+
+    # Get relative path from root
+    try:
+        rel_path = path.relative_to(root)
+    except ValueError:
+        return False
+
+    rel_path_str = str(rel_path)
+
+    # Check against each exclusion pattern
+    for pattern in exclude_patterns:
+        # Remove trailing slash for directory patterns
+        clean_pattern = pattern.rstrip("/")
+
+        # Check direct match
+        if fnmatch.fnmatch(rel_path_str, clean_pattern):
+            return True
+
+        # Check if any parent directory matches
+        if fnmatch.fnmatch(path.name, clean_pattern):
+            return True
+
+        # Check directory patterns (pattern ending with /)
+        if pattern.endswith("/"):
+            if (
+                rel_path_str.startswith(clean_pattern + "/")
+                or rel_path_str == clean_pattern
+            ):
+                return True
+
+    return False
+
+
+def generate_sync_preview(root_path: Path, exclude_patterns: list[str]) -> dict:
+    """
+    Generate a first-level tree preview of what will be synced.
+
+    Args:
+        root_path: Root directory to preview
+        exclude_patterns: List of exclusion patterns
+
+    Returns:
+        Dictionary with files and directories that will be synced
+    """
+    preview = {"files": [], "directories": []}
+
+    try:
+        # Get first-level items only
+        for item in sorted(root_path.iterdir()):
+            # Skip hidden files/directories except specific ones
+            if item.name.startswith(".") and item.name not in [
+                ".env",
+                ".gitignore",
+                ".dockerignore",
+            ]:
+                continue
+
+            # Check if excluded
+            if should_exclude(item, root_path, exclude_patterns):
+                continue
+
+            if item.is_file():
+                # Get file size
+                try:
+                    size = item.stat().st_size
+                    size_str = format_size(size)
+                    preview["files"].append((item.name, size_str))
+                except (OSError, PermissionError):
+                    preview["files"].append((item.name, "?"))
+            elif item.is_dir():
+                # Count items in directory (non-recursively)
+                try:
+                    count = sum(1 for _ in item.iterdir())
+                    preview["directories"].append((item.name, count))
+                except (OSError, PermissionError):
+                    preview["directories"].append((item.name, "?"))
+
+    except (OSError, PermissionError):
+        pass
+
+    return preview
+
+
+def format_size(size_bytes: int) -> str:
+    """Format size in bytes to human-readable format."""
+    for unit in ["B", "KB", "MB", "GB"]:
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.1f}{unit}"
+        size_bytes /= 1024.0
+    return f"{size_bytes:.1f}TB"
+
+
+def print_sync_preview(logger, root_path: Path, exclude_patterns: list[str]):
+    """Print a preview of what will be synced."""
+    preview = generate_sync_preview(root_path, exclude_patterns)
+
+    with logger.panel_output(
+        "Sync Preview", subtitle=f"First-level contents of {root_path.name}"
+    ) as panel:
+        # Print directories
+        if preview["directories"]:
+            panel.write("📁 Directories:")
+            for dir_name, count in preview["directories"]:
+                count_str = f"{count} items" if isinstance(count, int) else count
+                panel.write(f"  ├─ {dir_name}/ ({count_str})")
+
+        # Print files
+        if preview["files"]:
+            panel.write("\n📄 Files:")
+            for file_name, size in preview["files"]:
+                panel.write(f"  ├─ {file_name} ({size})")
+
+        # Summary
+        total_dirs = len(preview["directories"])
+        total_files = len(preview["files"])
+        panel.write(
+            f"\n📊 Total: {total_dirs} directories, {total_files} files at root level"
+        )
+        panel.write(
+            f"🚫 Excluding {len(exclude_patterns)} patterns from .gitignore and defaults"
+        )
+
+
 def verify_env_vars(remote: RemoteConfig | None = None, dryrun: bool = False) -> dict:  # noqa: FA100
     """Verify required environment variables and return all env vars as dict."""
     required_vars = ["GIT_NAME", "GITHUB_TOKEN", "GIT_EMAIL"]
@@ -408,25 +719,12 @@ def sync_project(
         use_working_dir=False,
     )
 
-    # Default exclusions for temporary/generated files
-    default_excludes = [
-        "__pycache__",
-        "*.pyc",
-        "node_modules",
-        ".venv",
-        "*.egg-info",
-        ".DS_Store",
-        "wandb/",  # Weights & Biases logs
-        "outputs/",  # Common output directory
-        ".vscode-server/",  # VSCode server files
-        "*.swp",  # Vim swap files
-        ".idea/",  # PyCharm files
-        "dist/",  # Python distribution files
-        "build/",  # Build artifacts
-    ]
+    # Get all exclusion patterns from gitignore, dockerignore, and user-provided patterns
+    user_excludes = exclude.split(",") if exclude else []
+    all_excludes = get_all_exclusion_patterns(project_root, user_excludes)
 
-    # Combine default excludes with user-provided patterns
-    all_excludes = default_excludes + (exclude.split(",") if exclude else [])
+    # Show sync preview
+    print_sync_preview(logger, project_root, all_excludes)
 
     # Build rsync command
     ssh_cmd = "ssh"
