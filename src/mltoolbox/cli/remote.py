@@ -17,6 +17,7 @@ from mltoolbox.utils.docker import (
     start_container,
 )
 from mltoolbox.utils.helpers import remote_cmd
+from mltoolbox.utils.logger import get_logger
 from mltoolbox.utils.remote import (
     build_rclone_cmd,
     fetch_remote,
@@ -29,6 +30,8 @@ from mltoolbox.utils.remote import (
     verify_env_vars,
     wait_for_host,
 )
+
+logger = get_logger()
 
 db = DB()
 
@@ -136,8 +139,27 @@ def connect(
     # Validate host IP address format
     ip_pattern = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
     if not re.match(ip_pattern, host_or_alias):
-        host = None
-        alias = host_or_alias
+        # Not an IP - check if it's an existing alias
+        existing_remote = db.get_remote_fuzzy(host_or_alias)
+        if (
+            existing_remote
+            and hasattr(existing_remote, "host")
+            and hasattr(existing_remote, "username")
+        ):
+            # Use existing remote configuration
+            logger.info(
+                f"Found existing alias '{host_or_alias}', using stored configuration"
+            )
+            host = existing_remote.host
+            username = existing_remote.username
+            alias = host_or_alias
+            # Use stored identity_file if not overridden
+            if not identity_file and existing_remote.identity_file:
+                identity_file = existing_remote.identity_file
+        else:
+            # New alias, need IP address
+            host = None
+            alias = host_or_alias
     else:
         host = host_or_alias
 
