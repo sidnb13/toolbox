@@ -31,8 +31,6 @@ from mltoolbox.utils.remote import (
     wait_for_host,
 )
 
-logger = get_logger()
-
 db = DB()
 
 
@@ -147,7 +145,7 @@ def connect(
             and hasattr(existing_remote, "username")
         ):
             # Use existing remote configuration
-            logger.info(
+            click.echo(
                 f"Found existing alias '{host_or_alias}', using stored configuration"
             )
             host = existing_remote.host
@@ -462,7 +460,6 @@ def connect(
 @remote.command()
 def list_remotes():  # noqa: A001
     """List remotes and their associated projects."""
-    from mltoolbox.utils.logger import get_logger
 
     logger = get_logger()
 
@@ -491,7 +488,6 @@ def list_remotes():  # noqa: A001
 @click.argument("host_or_alias")
 def remove(host_or_alias: str):
     """Remove a remote."""
-    from mltoolbox.utils.logger import get_logger
 
     logger = get_logger()
 
@@ -525,7 +521,6 @@ def sync(host_or_alias, exclude, port):
     remote_config = RemoteConfig(host=remote.host, username=remote.username, port=port)
 
     sync_project(remote_config, project_name, exclude=exclude)
-    from mltoolbox.utils.logger import get_logger
 
     logger = get_logger()
     logger.success(f"Synced project files with remote host {host_or_alias}")
@@ -850,9 +845,13 @@ def datasync(
     default=None,
     help="Override container name (defaults to project name or CONTAINER_NAME)",
 )
-def attach(host_or_alias, port, container_name):
+@click.option(
+    "--branch-name",
+    default=None,
+    help="Branch name to use (e.g., 'main', 'feature/new-feature')",
+)
+def attach(host_or_alias, port, container_name, branch_name):
     """Attach to a running remote container shell (no sync, no checks, just shell)."""
-    from mltoolbox.utils.logger import get_logger
 
     logger = get_logger()
     project_name = Path.cwd().name
@@ -878,6 +877,23 @@ def attach(host_or_alias, port, container_name):
                     break
         if not container_name:
             container_name = project_name.lower()
+
+    # Get current branch if not specified (same logic as connect command)
+    if not branch_name:
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            branch_name = result.stdout.strip()
+        except:  # noqa: E722
+            branch_name = None
+
+    # Append branch name to container name (same logic as connect command)
+    if branch_name:
+        container_name = f"{container_name}-{branch_name}"
 
     # Check if container exists and is running
     check_cmd = [

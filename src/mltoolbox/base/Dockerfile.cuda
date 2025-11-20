@@ -4,7 +4,7 @@ ARG PYTHON_VERSION
 
 # Combine environment variable settings
 ENV TZ=Etc/UTC \
-    PATH="/usr/local/bin:${PATH}" \
+    PATH="/usr/local/bin:/root/.npm-global/bin:${PATH}" \
     PYTHONPATH="/usr/local/lib/python${PYTHON_VERSION}/dist-packages:${PYTHONPATH:-}" \
     DEBIAN_FRONTEND=noninteractive \
     PYTHONBREAKPOINT=IPython.terminal.debugger.set_trace
@@ -28,7 +28,9 @@ RUN apt-get update && \
     zsh \
     net-tools \
     unzip \
-    software-properties-common && \
+    software-properties-common \
+    nodejs \
+    npm && \
     add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -58,3 +60,12 @@ RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python && \
     ln -sf /root/.local/bin/uv /usr/local/bin/uv && \
     # Verify uv installation
     /root/.local/bin/uv --version
+
+# Install Claude Code
+RUN mkdir -p /root/.npm-global && \
+    npm config set prefix '/root/.npm-global' && \
+    npm install -g @anthropic-ai/claude-code && \
+    # Make Claude Code available in PATH
+    ln -sf /root/.npm-global/bin/claude /usr/local/bin/claude && \
+    # Verify Claude Code installation
+    claude --version || echo "Claude Code installed"

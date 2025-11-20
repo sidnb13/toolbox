@@ -4,7 +4,7 @@ ARG PYTHON_VERSION=3.10.12
 
 # Combine environment variable settings
 ENV TZ=Etc/UTC \
-    PATH="/usr/local/bin:${PATH}" \
+    PATH="/usr/local/bin:/root/.npm-global/bin:${PATH}" \
     PYTHONBREAKPOINT=IPython.terminal.debugger.set_trace
 
 WORKDIR /workspace
@@ -25,7 +25,9 @@ RUN apt-get install -y --no-install-recommends \
         zsh \
         net-tools \
         unzip \
-        software-properties-common && \
+        software-properties-common \
+        nodejs \
+        npm && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -44,3 +46,12 @@ RUN chsh -s $(which zsh) && \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     # Make uv available in PATH for all users
     ln -sf /root/.local/bin/uv /usr/local/bin/uv
+
+# Install Claude Code
+RUN mkdir -p /root/.npm-global && \
+    npm config set prefix '/root/.npm-global' && \
+    npm install -g @anthropic-ai/claude-code && \
+    # Make Claude Code available in PATH
+    ln -sf /root/.npm-global/bin/claude /usr/local/bin/claude && \
+    # Verify Claude Code installation
+    claude --version || echo "Claude Code installed"
