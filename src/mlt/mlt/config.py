@@ -1,9 +1,41 @@
 """Parse docker-compose.yml for path mappings."""
 
 import os
+import re
 from pathlib import Path
 
 import yaml
+
+
+def load_env_file(project_dir: str = ".") -> dict[str, str]:
+    """Load environment variables from .env file."""
+    env_file = Path(project_dir).resolve() / ".env"
+    env_vars = {}
+
+    if env_file.exists():
+        with open(env_file) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    if "=" in line:
+                        key, value = line.split("=", 1)
+                        # Remove quotes if present
+                        value = value.strip().strip('"').strip("'")
+                        env_vars[key.strip()] = value
+
+    return env_vars
+
+
+def substitute_env_vars(text: str, env_vars: dict[str, str]) -> str:
+    """Substitute ${VAR} or $VAR patterns with environment variables."""
+
+    # Handle ${VAR} format
+    def replace_var(match):
+        var_name = match.group(1)
+        return env_vars.get(var_name, match.group(0))
+
+    text = re.sub(r"\$\{([^}]+)\}", replace_var, text)
+    return text
 
 
 def parse_docker_compose(project_dir: str = ".") -> dict[str, tuple[str, str]] | None:
@@ -23,9 +55,15 @@ def parse_docker_compose(project_dir: str = ".") -> dict[str, tuple[str, str]] |
     if not compose_file.exists():
         return None
 
+    # Load environment variables
+    env_vars = load_env_file(project_dir)
+
     try:
         with open(compose_file) as f:
-            compose_data = yaml.safe_load(f)
+            compose_content = f.read()
+            # Substitute environment variables
+            compose_content = substitute_env_vars(compose_content, env_vars)
+            compose_data = yaml.safe_load(compose_content)
 
         if not compose_data or "services" not in compose_data:
             return None
