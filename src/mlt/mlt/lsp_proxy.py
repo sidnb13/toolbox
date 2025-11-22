@@ -36,6 +36,7 @@ def run_lsp_proxy(
         host_path, container_path = None, None
     else:
         host_path, container_path = path_mapping
+        print(f"[mlt] Path mapping: {host_path} <-> {container_path}", file=sys.stderr)
 
     # Start LSP server in container
     docker_cmd = ["docker", "exec", "-i", container_name] + lsp_command
@@ -60,20 +61,32 @@ def run_lsp_proxy(
         """Translate host paths to container paths."""
         if not host_path or not container_path:
             return text
+        original = text
         # Handle file:// URIs
         text = text.replace(f"file://{host_path}", f"file://{container_path}")
         # Handle plain paths
         text = text.replace(host_path, container_path)
+        if text != original:
+            print(
+                f"[mlt] HOST->CONTAINER: {host_path} -> {container_path}",
+                file=sys.stderr,
+            )
         return text
 
     def translate_container_to_host(text: str) -> str:
         """Translate container paths to host paths."""
         if not host_path or not container_path:
             return text
+        original = text
         # Handle file:// URIs
         text = text.replace(f"file://{container_path}", f"file://{host_path}")
         # Handle plain paths
         text = text.replace(container_path, host_path)
+        if text != original:
+            print(
+                f"[mlt] CONTAINER->HOST: {container_path} -> {host_path}",
+                file=sys.stderr,
+            )
         return text
 
     def forward_stdin():

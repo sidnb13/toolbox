@@ -44,8 +44,10 @@ def get_container_name(project_dir: str = ".") -> str | None:
             pass
 
     # Auto-detect by project name
+    # Try exact match first, then partial match
     project_name = project_path.name.lower()
     try:
+        # First try: filter by name (partial match)
         result = subprocess.run(
             [
                 "docker",
@@ -59,10 +61,18 @@ def get_container_name(project_dir: str = ".") -> str | None:
             text=True,
             check=True,
         )
-        containers = result.stdout.strip().split("\n")
-        containers = [c for c in containers if c]  # Filter empty strings
+        containers = [c.strip() for c in result.stdout.strip().split("\n") if c.strip()]
+
         if containers:
-            # Return first match
+            # Prefer exact match if exists
+            for container in containers:
+                if container == project_name:
+                    return container
+            # Otherwise return first container that starts with project name
+            for container in containers:
+                if container.startswith(project_name):
+                    return container
+            # Fallback: return first match
             return containers[0]
     except subprocess.CalledProcessError:
         pass
