@@ -641,6 +641,7 @@ def sync_project(
     exclude: list = "",
     source_path: Path | None = None,
     dryrun: bool = False,
+    force: bool = False,
 ) -> None:
     """Sync project files with remote host (one-way, local to remote)
 
@@ -649,6 +650,7 @@ def sync_project(
         project_name: Project name
         remote_path: Optional custom remote path to use instead of project_name
         exclude: Patterns to exclude
+        force: Skip confirmation prompts
         source_path: Optional source path to sync from (defaults to current directory)
     """
     logger = get_logger()
@@ -683,11 +685,15 @@ def sync_project(
             [f"cd ~/projects/{remote_path} && git status --porcelain"],
         ).stdout.strip()
 
-        if remote_status and not click.confirm(
-            "WARNING: Remote has untracked/modified files:\n"
-            f"{remote_status}\n"
-            "Do you want to proceed with sync? This might overwrite changes!",
-            default=False,
+        if (
+            remote_status
+            and not force
+            and not click.confirm(
+                "WARNING: Remote has untracked/modified files:\n"
+                f"{remote_status}\n"
+                "Do you want to proceed with sync? This might overwrite changes!",
+                default=False,
+            )
         ):
             logger.info("Skipping project sync, continuing with SSH key sync...")
             do_project_sync = False

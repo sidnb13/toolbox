@@ -15,7 +15,7 @@ def main():
     pass
 
 
-@main.command()
+@main.command(context_settings=dict(ignore_unknown_options=True))
 @click.argument("lsp_command", nargs=-1, required=True)
 @click.option(
     "--container", default=None, help="Container name (auto-detected if not provided)"

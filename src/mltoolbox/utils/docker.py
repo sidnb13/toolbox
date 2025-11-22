@@ -305,7 +305,7 @@ def test_gpu_access(remote: RemoteConfig, skip_gpu_check: bool = False) -> bool:
         return False
 
 
-def check_docker_group(remote: RemoteConfig) -> None:
+def check_docker_group(remote: RemoteConfig, force: bool = False) -> None:
     """Check if Docker is properly configured and user is in docker group."""
     logger = get_logger()
 
@@ -377,7 +377,7 @@ def check_docker_group(remote: RemoteConfig) -> None:
                     "Changing Docker daemon configuration will restart Docker and KILL all running containers!"
                 )
 
-                if not click.confirm(
+                if not force and not click.confirm(
                     "Do you want to continue and modify Docker configuration?",
                     default=False,
                 ):

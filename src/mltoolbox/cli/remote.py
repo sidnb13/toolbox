@@ -70,6 +70,7 @@ def remote():
     help="Comma-separated patterns to exclude (e.g., 'checkpoints,wandb')",
 )
 @click.option("--skip-sync", is_flag=True, help="Skip syncing project files")
+@click.option("--yes", "-y", is_flag=True, help="Skip all confirmation prompts")
 @click.option(
     "--python-version",
     default=None,
@@ -117,6 +118,7 @@ def connect(
     timeout,
     exclude,
     skip_sync,
+    yes,
     python_version,
     branch_name,
     network_mode,
@@ -293,7 +295,7 @@ def connect(
         logger.info("[DRYRUN] Would create remote project directories (skipped)")
 
     if not dryrun:
-        check_docker_group(remote_config)
+        check_docker_group(remote_config, force=yes)
         logger.success("Docker group checked")
         check_nvidia_container_toolkit(remote_config, variant=variant or "cuda")
         logger.success("NVIDIA Container Toolkit checked")
@@ -321,6 +323,7 @@ def connect(
             remote_path=project_name,
             exclude=exclude,
             dryrun=dryrun,
+            force=yes,
         )
     else:
         logger.info("Skipping project sync, continuing with SSH key sync...")
