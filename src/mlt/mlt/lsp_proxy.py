@@ -40,6 +40,10 @@ def run_lsp_proxy(
     # Start LSP server in container
     docker_cmd = ["docker", "exec", "-i", container_name] + lsp_command
 
+    # Debug output
+    print(f"[mlt] Running command: {' '.join(docker_cmd)}", file=sys.stderr)
+    print(f"[mlt] LSP command args: {lsp_command}", file=sys.stderr)
+
     try:
         proc = subprocess.Popen(
             docker_cmd,
