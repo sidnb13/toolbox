@@ -15,15 +15,21 @@ def main():
     pass
 
 
-@main.command(context_settings=dict(ignore_unknown_options=True))
-@click.argument("lsp_command", nargs=-1, required=True)
+@main.command(
+    context_settings=dict(
+        ignore_unknown_options=True,
+        allow_extra_args=True,
+        allow_interspersed_args=False,
+    )
+)
 @click.option(
     "--container", default=None, help="Container name (auto-detected if not provided)"
 )
 @click.option(
     "--project-dir", default=".", help="Project directory (default: current directory)"
 )
-def lsp_proxy(lsp_command, container, project_dir):
+@click.pass_context
+def lsp_proxy(ctx, container, project_dir):
     """
     Run LSP server in container with path translation.
 
@@ -31,6 +37,14 @@ def lsp_proxy(lsp_command, container, project_dir):
         mlt lsp-proxy ruff server
         mlt lsp-proxy basedpyright-langserver --stdio
     """
+    # Get LSP command from extra args
+    lsp_command = ctx.args
+
+    if not lsp_command:
+        click.echo("[mlt] ERROR: No LSP command provided", err=True)
+        click.echo("[mlt] Usage: mlt lsp-proxy <lsp-command> [args...]", err=True)
+        sys.exit(1)
+
     # Auto-detect container if not provided
     if not container:
         container = get_container_name(project_dir)
@@ -40,7 +54,7 @@ def lsp_proxy(lsp_command, container, project_dir):
             sys.exit(1)
 
     # Run the LSP proxy
-    exit_code = run_lsp_proxy(container, list(lsp_command), project_dir)
+    exit_code = run_lsp_proxy(container, lsp_command, project_dir)
     sys.exit(exit_code)
 
 
