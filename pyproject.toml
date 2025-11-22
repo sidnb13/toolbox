@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv>=0.19.0",
     "rich>=14.0.0",
     "setuptools==80.9.0",
+    "pyyaml>=6.0.0",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +54,7 @@ Repository = "https://github.com/sidbaskaran/toolbox.git"
 
 [project.scripts]
 mltoolbox = "mltoolbox.cli:cli"
+mlt = "mltoolbox.mlt_cli:main"
 instancebot = "instancebot.cli:cli"
 
 [build-system]

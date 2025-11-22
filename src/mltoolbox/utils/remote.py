@@ -236,6 +236,46 @@ def setup_rclone(remote_config: RemoteConfig) -> None:
         logger.error(f"Failed to sync rclone config: {e}")
 
 
+def setup_claude_code(remote_config: RemoteConfig) -> None:
+    """Setup Claude Code configuration on remote host by syncing entire ~/.claude directory."""
+    logger = get_logger()
+    local_claude_dir = Path.home() / ".claude"
+
+    if not local_claude_dir.exists():
+        logger.warning("No local Claude Code directory found at ~/.claude")
+        return
+
+    logger.step("Setting up Claude Code configuration")
+
+    # Create remote Claude Code config directory
+    remote_cmd(
+        remote_config,
+        ["mkdir -p ~/.claude"],
+        use_working_dir=False,
+    )
+
+    # Use rsync to sync entire .claude directory
+    try:
+        ssh_cmd = "ssh"
+        if remote_config.port:
+            ssh_cmd = f"ssh -p {remote_config.port}"
+
+        rsync_cmd = [
+            "rsync",
+            "-avz",  # archive, verbose, compress
+            "--progress",
+            "-e",
+            ssh_cmd,
+            f"{local_claude_dir}/",  # Trailing slash to sync contents
+            f"{remote_config.username}@{remote_config.host}:~/.claude/",
+        ]
+
+        subprocess.run(rsync_cmd, check=True)
+        logger.success("Claude Code directory synced successfully")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to sync Claude Code directory: {e}")
+
+
 def update_env_file(
     remote_config: RemoteConfig | None,
     project_name: str,

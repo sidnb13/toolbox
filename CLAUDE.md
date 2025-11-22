@@ -228,6 +228,112 @@ pip install -e ".[all,dev]"
 pre-commit install
 ```
 
+### Zed Editor Integration for Remote Development
+
+When developing on remote hosts with Docker containers, Zed editor needs access to Python packages for LSP features (autocomplete, linting, type checking). Since packages are installed inside the container for proper CUDA/PyTorch support, mltoolbox uses the `mlt` tool to provide transparent LSP proxying with automatic path translation.
+
+#### How It Works
+
+1. **LSP Tools in Container**: `ruff` and `basedpyright` are installed inside the Docker container with your project dependencies
+
+2. **mlt Tool**: A lightweight CLI tool (`mlt-toolbox` package) installed on the remote host provides:
+   - LSP proxy functionality (`mlt lsp-proxy`)
+   - Automatic path translation between host and container
+   - Container auto-detection
+   - Helper commands (`mlt attach`, `mlt status`)
+
+3. **Path Translation**: `mlt` automatically reads `docker-compose.yml` to understand path mappings and translates file paths in LSP messages bidirectionally
+
+4. **Zed Configuration**: The `.zed/settings.json` file points directly to `mlt` commands
+
+#### Automatic Setup
+
+Everything is configured automatically when you run `mltoolbox remote connect`:
+
+1. **mlt installation**: `pip install mlt-toolbox` on the remote host
+2. **`.zed/settings.json`**: Created in your project root with `mlt` LSP configuration
+3. **Path mappings**: Automatically detected from `docker-compose.yml`
+
+#### Zed Settings Reference
+
+Your `.zed/settings.json` contains:
+
+```json
+{
+  "lsp": {
+    "ruff": {
+      "binary": {
+        "path": "mlt",
+        "arguments": ["lsp-proxy", "ruff", "server"]
+      }
+    },
+    "basedpyright": {
+      "binary": {
+        "path": "mlt",
+        "arguments": ["lsp-proxy", "basedpyright-langserver", "--stdio"]
+      }
+    }
+  }
+}
+```
+
+#### Manual Testing
+
+```bash
+# On remote host, check mlt is installed
+which mlt
+
+# Test container detection
+mlt container
+
+# Check project status
+mlt status
+
+# Test LSP proxy manually (should wait for input)
+mlt lsp-proxy ruff server
+
+# Attach to container
+mlt attach
+```
+
+#### Benefits
+
+- **Full package access**: LSP sees all packages installed in container
+- **Proper CUDA environment**: PyTorch/CUDA packages work correctly
+- **Automatic path translation**: Host paths ↔ container paths handled transparently
+- **No duplicate installations**: Single source of truth in container
+- **Clean architecture**: No wrapper scripts, just one `mlt` binary
+- **Auto-detection**: Finds container based on project name or CONTAINER_NAME env var
+
+#### Troubleshooting
+
+**LSP not working:**
+1. Check `mlt` is installed: `which mlt`
+2. Check container is running: `mlt status` or `docker ps`
+3. Test container detection: `mlt container`
+4. Check Zed settings: `cat .zed/settings.json`
+5. Verify LSP tools in container: `docker exec <container> which ruff basedpyright-langserver`
+6. Restart Zed or reload window
+
+**Path translation issues:**
+- `mlt` reads path mappings from `docker-compose.yml`
+- Verify your `docker-compose.yml` has the project volume mount
+- Check with: `docker inspect <container> | grep Mounts -A 20`
+
+**Container not found:**
+- `mlt` tries: CONTAINER_NAME env var → .env file → docker ps auto-detect
+- Set explicitly: `export CONTAINER_NAME=myproject-main`
+- Or ensure container name matches project directory name
+
+**mlt not installed:**
+```bash
+# On remote host
+pip install mlt-toolbox
+
+# Or with specific version
+pip install mlt-toolbox==0.1.0
+```
+
 ### Branch Strategy
 
 - **Main branch**: Stable releases

@@ -177,4 +177,7 @@ pyrightconfig.json
 # Mac
 .DS_Store
 
+# Container Python packages (mounted from container for Zed LSP)
+.container-python/
+
 # End of https://www.toptal.com/developers/gitignore/api/python

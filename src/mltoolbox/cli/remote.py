@@ -22,6 +22,7 @@ from mltoolbox.utils.remote import (
     build_rclone_cmd,
     fetch_remote,
     run_rclone_sync,
+    setup_claude_code,
     setup_rclone,
     setup_remote_ssh_keys,
     setup_zshrc,
@@ -324,6 +325,12 @@ def connect(
     else:
         logger.info("Skipping project sync, continuing with SSH key sync...")
 
+    # Setup Claude Code config AFTER project sync to ensure global config takes precedence
+    if not dryrun:
+        setup_claude_code(remote_config)
+    else:
+        logger.info("[DRYRUN] Would setup Claude Code config (skipped)")
+
     # Set up environment first
     env_updates = {
         **env_vars,
@@ -411,6 +418,19 @@ def connect(
         python_version=python_version_major_minor,  # Use major.minor for main container
         variant=variant or "cuda",
     )
+
+    # Install mlt tool on the remote host for LSP proxying
+    logger.step("Installing mlt tool for LSP support")
+    # Get git repo URL from environment or use default
+    git_repo = os.getenv("TOOLBOX_REPO", "https://github.com/sidnb13/toolbox.git")
+    install_mlt_cmd = f"pip install 'git+{git_repo}#subdirectory=src/mlt' || echo 'Warning: mlt installation failed'"
+    mlt_install_config = RemoteConfig(
+        host=remote.host,
+        username=remote.username,
+        identity_file=str(remote.identity_file),
+        port=port,
+    )
+    remote_cmd(mlt_install_config, [install_mlt_cmd])
 
     cmd = f"cd ~/projects/{project_name} && docker exec -it -w /workspace/{project_name} {container_name} zsh"
 

@@ -172,6 +172,12 @@ def generate_project_files(
     dockerfile = render_template("Dockerfile.j2", **context)
     (project_dir / "Dockerfile").write_text(dockerfile)
 
+    # Generate Zed editor LSP configuration
+    zed_dir = project_dir / ".zed"
+    zed_dir.mkdir(exist_ok=True)
+    zed_settings = render_template("zed-settings.json.j2", **context)
+    (zed_dir / "settings.json").write_text(zed_settings)
+
     # Create template environment variables directly
     template_env = {
         "PROJECT_NAME": project_name.upper(),

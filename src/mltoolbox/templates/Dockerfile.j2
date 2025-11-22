@@ -35,10 +35,10 @@ RUN chmod +x /usr/local/bin/ray-init.sh /usr/local/bin/entrypoint.sh
 # Copy only dependency files
 COPY pyproject.toml uv.lock* ./
 
-# Install everything to system Python
+# Install everything to system Python, including LSP tools for Zed editor
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system -e ".[${DEPENDENCY_TAGS}]" && \
-    uv pip install --system ipdb
+    uv pip install --system ipdb ruff basedpyright
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["zsh"]

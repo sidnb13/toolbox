@@ -4,7 +4,7 @@ ARG PYTHON_VERSION
 
 # Combine environment variable settings
 ENV TZ=Etc/UTC \
-    PATH="/usr/local/bin:/root/.npm-global/bin:${PATH}" \
+    PATH="/usr/local/bin:${PATH}" \
     PYTHONPATH="/usr/local/lib/python${PYTHON_VERSION}/dist-packages:${PYTHONPATH:-}" \
     DEBIAN_FRONTEND=noninteractive \
     PYTHONBREAKPOINT=IPython.terminal.debugger.set_trace
@@ -28,9 +28,7 @@ RUN apt-get update && \
     zsh \
     net-tools \
     unzip \
-    software-properties-common \
-    nodejs \
-    npm && \
+    software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -61,11 +59,22 @@ RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python && \
     # Verify uv installation
     /root/.local/bin/uv --version
 
+# Install Node.js 20 (required for Claude Code)
+RUN apt-get update && apt-get install -y \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install Claude Code
-RUN mkdir -p /root/.npm-global && \
-    npm config set prefix '/root/.npm-global' && \
-    npm install -g @anthropic-ai/claude-code && \
-    # Make Claude Code available in PATH
-    ln -sf /root/.npm-global/bin/claude /usr/local/bin/claude && \
-    # Verify Claude Code installation
-    claude --version || echo "Claude Code installed"
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
+# Configure Python to prioritize system packages over current directory
+# This prevents local directories from shadowing installed packages
+# We create sitecustomize.py in site-packages which runs during site initialization
+RUN python${PYTHON_VERSION} -c "import site; import sys; \
+    import pathlib; \
+    site_packages = [p for p in sys.path if 'site-packages' in p or 'dist-packages' in p][0]; \
+    sitecustomize = pathlib.Path(site_packages) / 'sitecustomize.py'; \
+    sitecustomize.write_text('''import sys\nimport os\nfrom pathlib import Path\n\n# Move current directory to end of sys.path to prioritize installed packages\n# This prevents local directories (e.g., numpy/) from shadowing installed packages\ncwd = Path.cwd().resolve()\ncwd_str = str(cwd)\ncwd_relative = '.'\n# Remove both absolute and relative current directory from sys.path\nwhile cwd_str in sys.path:\n    sys.path.remove(cwd_str)\nwhile cwd_relative in sys.path:\n    sys.path.remove(cwd_relative)\n# Add current directory at the end (lowest priority)\nsys.path.append(cwd_str)\n''')"
