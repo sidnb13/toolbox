@@ -155,11 +155,15 @@ def generate_project_files(
             project_ray_init.write_bytes(base_ray_init.read_bytes())
             project_ray_init.chmod(0o755)  # Make executable
 
+    # Extract major.minor version for paths (e.g., "3.11.13" -> "3.11")
+    python_version_short = ".".join(python_version.split(".")[:2])
+
     context = {
         "project_name": project_name.lower(),
         "ray": ray,
         "container_name": project_name.lower(),
-        "python_version": python_version,
+        "python_version": python_version,  # Full version for PYTHON_VERSION env var
+        "python_version_short": python_version_short,  # Short version for paths
         "variant": variant,
         **env_vars,
     }
