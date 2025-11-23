@@ -25,25 +25,14 @@ def run_lsp_proxy(
     # Get path mappings
     path_mapping = get_path_mapping(project_dir)
     if not path_mapping:
-        print(
-            "[mlt] WARNING: Could not determine path mappings from docker-compose.yml",
-            file=sys.stderr,
-        )
-        print(
-            "[mlt] LSP will work but paths may not be translated correctly",
-            file=sys.stderr,
-        )
+        print("[mlt] ⚠️  No path mapping (LSP may not work correctly)", file=sys.stderr)
         host_path, container_path = None, None
     else:
         host_path, container_path = path_mapping
-        print(f"[mlt] Path mapping: {host_path} <-> {container_path}", file=sys.stderr)
+        print(f"[mlt] {lsp_command[0]} → {container_name}", file=sys.stderr)
 
     # Start LSP server in container
     docker_cmd = ["docker", "exec", "-i", container_name] + lsp_command
-
-    # Debug output
-    print(f"[mlt] Running command: {' '.join(docker_cmd)}", file=sys.stderr)
-    print(f"[mlt] LSP command args: {lsp_command}", file=sys.stderr)
 
     try:
         proc = subprocess.Popen(
@@ -57,6 +46,9 @@ def run_lsp_proxy(
         print(f"[mlt] ERROR: Failed to start LSP in container: {e}", file=sys.stderr)
         return 1
 
+    # Track if we've logged path translation (only log once)
+    _logged_translation = {"host_to_container": False, "container_to_host": False}
+
     def translate_host_to_container(text: str) -> str:
         """Translate host paths to container paths."""
         if not host_path or not container_path:
@@ -66,11 +58,9 @@ def run_lsp_proxy(
         text = text.replace(f"file://{host_path}", f"file://{container_path}")
         # Handle plain paths
         text = text.replace(host_path, container_path)
-        if text != original:
-            print(
-                f"[mlt] HOST->CONTAINER: {host_path} -> {container_path}",
-                file=sys.stderr,
-            )
+        if text != original and not _logged_translation["host_to_container"]:
+            print(f"[mlt] ↑ {host_path} → {container_path}", file=sys.stderr)
+            _logged_translation["host_to_container"] = True
         return text
 
     def translate_container_to_host(text: str) -> str:
@@ -82,11 +72,9 @@ def run_lsp_proxy(
         text = text.replace(f"file://{container_path}", f"file://{host_path}")
         # Handle plain paths
         text = text.replace(container_path, host_path)
-        if text != original:
-            print(
-                f"[mlt] CONTAINER->HOST: {container_path} -> {host_path}",
-                file=sys.stderr,
-            )
+        if text != original and not _logged_translation["container_to_host"]:
+            print(f"[mlt] ↓ {container_path} → {host_path}", file=sys.stderr)
+            _logged_translation["container_to_host"] = True
         return text
 
     def forward_stdin():
