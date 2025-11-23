@@ -5,7 +5,7 @@ import subprocess
 import sys
 import threading
 
-from mlt.config import get_path_mapping
+from mlt.config import get_all_path_mappings
 
 
 def run_lsp_proxy(
@@ -22,21 +22,36 @@ def run_lsp_proxy(
     Returns:
         Exit code from LSP server
     """
-    # Get path mappings
-    path_mapping = get_path_mapping(project_dir)
-    if not path_mapping:
+    # Get path mappings (both project and library)
+    project_mapping, library_mapping = get_all_path_mappings(project_dir)
+
+    if not project_mapping:
         print(
-            "[mlt] WARNING: Could not determine path mappings from docker-compose.yml",
+            "[mlt] WARNING: Could not determine project path mapping from docker-compose.yml",
             file=sys.stderr,
         )
         print(
             "[mlt] LSP will work but paths may not be translated correctly",
             file=sys.stderr,
         )
-        host_path, container_path = None, None
+
+    if project_mapping:
+        proj_host, proj_container = project_mapping
+        print(
+            f"[mlt] Project mapping: {proj_host} <-> {proj_container}",
+            file=sys.stderr,
+        )
     else:
-        host_path, container_path = path_mapping
-        print(f"[mlt] Path mapping: {host_path} <-> {container_path}", file=sys.stderr)
+        proj_host, proj_container = None, None
+
+    if library_mapping:
+        lib_host, lib_container = library_mapping
+        print(
+            f"[mlt] Library mapping: {lib_host} <-> {lib_container}",
+            file=sys.stderr,
+        )
+    else:
+        lib_host, lib_container = None, None
 
     # Start LSP server in container
     docker_cmd = ["docker", "exec", "-i", container_name] + lsp_command
@@ -58,35 +73,41 @@ def run_lsp_proxy(
         return 1
 
     def translate_host_to_container(text: str) -> str:
-        """Translate host paths to container paths."""
-        if not host_path or not container_path:
-            return text
-        original = text
-        # Handle file:// URIs
-        text = text.replace(f"file://{host_path}", f"file://{container_path}")
-        # Handle plain paths
-        text = text.replace(host_path, container_path)
-        if text != original:
-            print(
-                f"[mlt] HOST->CONTAINER: {host_path} -> {container_path}",
-                file=sys.stderr,
-            )
+        """Translate host paths to container paths (both project and library)."""
+
+        # Translate project paths
+        if proj_host and proj_container:
+            # Handle file:// URIs
+            text = text.replace(f"file://{proj_host}", f"file://{proj_container}")
+            # Handle plain paths
+            text = text.replace(proj_host, proj_container)
+
+        # Translate library paths
+        if lib_host and lib_container:
+            # Handle file:// URIs
+            text = text.replace(f"file://{lib_host}", f"file://{lib_container}")
+            # Handle plain paths
+            text = text.replace(lib_host, lib_container)
+
         return text
 
     def translate_container_to_host(text: str) -> str:
-        """Translate container paths to host paths."""
-        if not host_path or not container_path:
-            return text
-        original = text
-        # Handle file:// URIs
-        text = text.replace(f"file://{container_path}", f"file://{host_path}")
-        # Handle plain paths
-        text = text.replace(container_path, host_path)
-        if text != original:
-            print(
-                f"[mlt] CONTAINER->HOST: {container_path} -> {host_path}",
-                file=sys.stderr,
-            )
+        """Translate container paths to host paths (both project and library)."""
+
+        # Translate library paths first (more specific, e.g., /usr/local/lib/...)
+        if lib_container and lib_host:
+            # Handle file:// URIs
+            text = text.replace(f"file://{lib_container}", f"file://{lib_host}")
+            # Handle plain paths
+            text = text.replace(lib_container, lib_host)
+
+        # Translate project paths
+        if proj_container and proj_host:
+            # Handle file:// URIs
+            text = text.replace(f"file://{proj_container}", f"file://{proj_host}")
+            # Handle plain paths
+            text = text.replace(proj_container, proj_host)
+
         return text
 
     def forward_stdin():

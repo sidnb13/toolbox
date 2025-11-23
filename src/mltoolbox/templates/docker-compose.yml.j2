@@ -22,8 +22,8 @@ services:
       - ~/.claude:/root/.claude
       - /var/run/docker.sock:/var/run/docker.sock
       - /tmp/ray_lockfiles:/root/ray_lockfiles
-      # Mount Python site-packages for LSP to read library code (read-write to allow package installs)
-      - /usr/local/lib/python{{ python_version_short }}/dist-packages:/usr/local/lib/python{{ python_version_short }}/dist-packages
+      # Mount Python site-packages to project-specific cache (isolates packages per container)
+      - ~/.cache/python-packages/${CONTAINER_NAME}:/usr/local/lib/python{{ python_version_short }}/dist-packages
       - type: bind
         source: ~/.ssh
         target: /root/.ssh
