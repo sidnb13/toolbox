@@ -60,6 +60,51 @@ def lsp_proxy(ctx, container, project_dir):
     sys.exit(exit_code)
 
 
+def find_zed_lsp_binary(lsp_command: list[str]) -> list[str] | None:
+    """Find Zed's bundled LSP tool and return the full command.
+
+    Args:
+        lsp_command: Original LSP command (e.g., ["ruff", "server"])
+
+    Returns:
+        Full command with Zed's bundled binary path, or None if not found
+    """
+    import platform
+
+    # Zed languages directory
+    if platform.system() == "Darwin":
+        zed_languages = Path.home() / "Library/Application Support/Zed/languages"
+    elif platform.system() == "Linux":
+        zed_languages = Path.home() / ".local/share/zed/languages"
+    else:
+        return None
+
+    if not zed_languages.exists():
+        return None
+
+    lsp_tool = lsp_command[0]
+    lsp_args = lsp_command[1:]
+
+    if lsp_tool == "ruff":
+        # Find ruff binary (versioned directory structure: ruff-*/ruff-*/ruff)
+        ruff_pattern = zed_languages / "ruff"
+        if ruff_pattern.exists():
+            ruff_bins = list(ruff_pattern.glob("ruff-*/ruff-*/ruff"))
+            if ruff_bins:
+                return [str(ruff_bins[0])] + lsp_args
+
+    elif lsp_tool == "basedpyright-langserver":
+        # basedpyright is Node.js - need to run with node
+        pyright_js = (
+            zed_languages
+            / "basedpyright/node_modules/basedpyright/dist/pyright-langserver.js"
+        )
+        if pyright_js.exists():
+            return ["node", str(pyright_js)] + lsp_args
+
+    return None
+
+
 @main.command(
     name="lsp-auto",
     context_settings=dict(
@@ -76,7 +121,7 @@ def lsp_auto(ctx, project_dir):
     """
     Smart LSP wrapper - auto-detects local vs remote context.
 
-    Local (no docker-compose.yml): Direct passthrough (zero overhead)
+    Local (no docker-compose.yml): Uses Zed's bundled LSP tools
     Remote (has docker-compose.yml): Use mlt lsp-proxy
 
     Example:
@@ -103,6 +148,27 @@ def lsp_auto(ctx, project_dir):
             current = current.parent
         return False
 
+    def run_local_passthrough(lsp_cmd):
+        """Run LSP command locally using Zed's bundled tools."""
+        # Try to find Zed's bundled LSP tool
+        zed_command = find_zed_lsp_binary(lsp_cmd)
+        if zed_command:
+            try:
+                result = subprocess.run(zed_command, check=False)
+                sys.exit(result.returncode)
+            except FileNotFoundError:
+                # Zed binary found but execution failed, fall through to error
+                pass
+
+        # Zed tool not found or failed, try system PATH as fallback
+        try:
+            result = subprocess.run(lsp_cmd, check=False)
+            sys.exit(result.returncode)
+        except FileNotFoundError:
+            click.echo(f"[mlt] ERROR: LSP command not found: {lsp_cmd[0]}", err=True)
+            click.echo("[mlt] Tried: Zed bundled tools and system PATH", err=True)
+            sys.exit(1)
+
     if detect_remote_context(project_dir):
         # Remote context detected - check if Docker is available
         try:
@@ -123,14 +189,7 @@ def lsp_auto(ctx, project_dir):
         if not docker_available:
             # Docker not available, use local passthrough
             click.echo("[mlt] Docker not available, using local passthrough", err=True)
-            try:
-                result = subprocess.run(lsp_command, check=False)
-                sys.exit(result.returncode)
-            except FileNotFoundError:
-                click.echo(
-                    f"[mlt] ERROR: LSP command not found: {lsp_command[0]}", err=True
-                )
-                sys.exit(1)
+            run_local_passthrough(lsp_command)
 
         # Docker is available, get container
         container = get_container_name(project_dir)
@@ -139,28 +198,13 @@ def lsp_auto(ctx, project_dir):
                 "[mlt] WARN: Remote context detected but no container found", err=True
             )
             click.echo("[mlt] Falling back to local passthrough", err=True)
-            # Fallback to local
-            try:
-                result = subprocess.run(lsp_command, check=False)
-                sys.exit(result.returncode)
-            except FileNotFoundError:
-                click.echo(
-                    f"[mlt] ERROR: LSP command not found: {lsp_command[0]}", err=True
-                )
-                sys.exit(1)
+            run_local_passthrough(lsp_command)
 
         exit_code = run_lsp_proxy(container, lsp_command, project_dir)
         sys.exit(exit_code)
     else:
-        # Local context - direct passthrough (zero overhead)
-        try:
-            result = subprocess.run(lsp_command, check=False)
-            sys.exit(result.returncode)
-        except FileNotFoundError:
-            click.echo(
-                f"[mlt] ERROR: LSP command not found: {lsp_command[0]}", err=True
-            )
-            sys.exit(1)
+        # Local context - use Zed's bundled tools
+        run_local_passthrough(lsp_command)
 
 
 @main.command()
