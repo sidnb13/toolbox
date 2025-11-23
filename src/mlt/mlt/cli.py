@@ -104,7 +104,35 @@ def lsp_auto(ctx, project_dir):
         return False
 
     if detect_remote_context(project_dir):
-        # Remote context - use lsp-proxy
+        # Remote context detected - check if Docker is available
+        try:
+            subprocess.run(
+                ["docker", "ps"],
+                capture_output=True,
+                check=True,
+                timeout=2,
+            )
+            docker_available = True
+        except (
+            subprocess.CalledProcessError,
+            FileNotFoundError,
+            subprocess.TimeoutExpired,
+        ):
+            docker_available = False
+
+        if not docker_available:
+            # Docker not available, use local passthrough
+            click.echo("[mlt] Docker not available, using local passthrough", err=True)
+            try:
+                result = subprocess.run(lsp_command, check=False)
+                sys.exit(result.returncode)
+            except FileNotFoundError:
+                click.echo(
+                    f"[mlt] ERROR: LSP command not found: {lsp_command[0]}", err=True
+                )
+                sys.exit(1)
+
+        # Docker is available, get container
         container = get_container_name(project_dir)
         if not container:
             click.echo(
