@@ -334,6 +334,55 @@ pip install mlt-toolbox
 pip install mlt-toolbox==0.1.0
 ```
 
+#### Multi-Container Support
+
+When working with multiple containers on the same remote host (different projects or branches), mltoolbox uses project-specific site-packages caching to avoid conflicts:
+
+**How It Works:**
+
+1. **Isolated Package Directories**: Each container mounts its site-packages to a unique host directory:
+   ```yaml
+   volumes:
+     - ~/.cache/python-packages/${CONTAINER_NAME}:/usr/local/lib/python3.11/dist-packages
+   ```
+
+2. **No Conflicts**: Different containers can have:
+   - Different Python versions
+   - Different package versions
+   - Completely isolated dependencies
+
+3. **Path Translation**: `mlt` translates both:
+   - **Project paths**: `/home/ubuntu/projects/X` ↔ `/workspace/X`
+   - **Library paths**: `~/.cache/python-packages/container-name` ↔ `/usr/local/lib/pythonX.Y/dist-packages`
+
+**Example Setup:**
+
+```bash
+# Container 1: causalab-main with Python 3.11
+~/.cache/python-packages/causalab-main/  → /usr/local/lib/python3.11/dist-packages
+
+# Container 2: causalab-feature with Python 3.12
+~/.cache/python-packages/causalab-feature/ → /usr/local/lib/python3.12/dist-packages
+
+# No conflicts! Each has isolated packages
+```
+
+**Container Detection:**
+
+When multiple containers exist, `mlt` automatically detects the correct one based on:
+1. Current project directory name
+2. CONTAINER_NAME in `.env` file
+3. Docker ps filtering by project name
+
+Each Zed instance runs in its project directory, so `mlt` always connects to the right container.
+
+**Benefits:**
+
+- Work on multiple branches simultaneously without package conflicts
+- Different Python versions per project
+- Clean separation of dependencies
+- Zed LSP works correctly for all containers independently
+
 ### Branch Strategy
 
 - **Main branch**: Stable releases

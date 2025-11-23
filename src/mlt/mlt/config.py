@@ -121,3 +121,77 @@ def get_path_mapping(project_dir: str = ".") -> tuple[str, str] | None:
         return (host_path, container_path)
 
     return None
+
+
+def get_all_path_mappings(
+    project_dir: str = ".",
+) -> tuple[tuple[str, str] | None, tuple[str, str] | None]:
+    """
+    Get both project and library path mappings from docker-compose.yml.
+
+    Args:
+        project_dir: Project directory containing docker-compose.yml
+
+    Returns:
+        Tuple of (project_mapping, library_mapping) where each is (host_path, container_path) or None
+        project_mapping: The main project volume mount (e.g., .:/workspace/project)
+        library_mapping: The site-packages mount (e.g., ~/.cache/python-packages/X:/usr/local/lib/pythonX.Y/dist-packages)
+    """
+    project_path = Path(project_dir).resolve()
+    compose_file = project_path / "docker-compose.yml"
+
+    if not compose_file.exists():
+        return (None, None)
+
+    # Load environment variables
+    env_vars = load_env_file(project_dir)
+
+    try:
+        with open(compose_file) as f:
+            compose_content = f.read()
+            # Substitute environment variables
+            compose_content = substitute_env_vars(compose_content, env_vars)
+            compose_data = yaml.safe_load(compose_content)
+
+        if not compose_data or "services" not in compose_data:
+            return (None, None)
+
+        project_mapping = None
+        library_mapping = None
+
+        for service_name, service_config in compose_data.get("services", {}).items():
+            if "volumes" not in service_config:
+                continue
+
+            for volume in service_config["volumes"]:
+                if isinstance(volume, str):
+                    # Format: "./path:/container/path" or "~/path:/container/path"
+                    parts = volume.split(":")
+                    if len(parts) >= 2:
+                        host_path = parts[0]
+                        container_path = parts[1]
+
+                        # Expand relative paths
+                        if host_path.startswith("."):
+                            host_path = str(project_path / host_path)
+                        elif host_path.startswith("~"):
+                            host_path = os.path.expanduser(host_path)
+
+                        # Resolve to absolute path
+                        host_path = str(Path(host_path).resolve())
+
+                        # Identify project mount (contains project_path)
+                        if str(project_path) in host_path:
+                            project_mapping = (host_path, container_path)
+
+                        # Identify library mount (contains dist-packages or site-packages)
+                        if (
+                            "dist-packages" in container_path
+                            or "site-packages" in container_path
+                        ):
+                            library_mapping = (host_path, container_path)
+
+        return (project_mapping, library_mapping)
+
+    except Exception:
+        return (None, None)
