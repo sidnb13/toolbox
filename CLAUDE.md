@@ -237,10 +237,11 @@ When developing on remote hosts with Docker containers, Zed editor needs access 
 1. **LSP Tools in Container**: `ruff` and `basedpyright` are installed inside the Docker container with your project dependencies
 
 2. **mlt Tool**: A lightweight CLI tool (`mlt-toolbox` package) installed on the remote host provides:
-   - LSP proxy functionality (`mlt lsp-proxy`)
+   - Smart LSP wrapper (`mlt lsp-auto`) - auto-detects local vs remote context
+   - LSP proxy functionality (`mlt lsp-proxy`) - direct container proxy
    - Automatic path translation between host and container
    - Container auto-detection
-   - Helper commands (`mlt attach`, `mlt status`)
+   - Helper commands (`mlt attach`, `mlt status`, `mlt sync-lsp`)
 
 3. **Path Translation**: `mlt` automatically reads `docker-compose.yml` to understand path mappings and translates file paths in LSP messages bidirectionally
 
@@ -256,7 +257,7 @@ Everything is configured automatically when you run `mltoolbox remote connect`:
 
 #### Zed Settings Reference
 
-Your `.zed/settings.json` contains:
+Your `.zed/settings.json` contains (works both locally and remotely):
 
 ```json
 {
@@ -264,18 +265,22 @@ Your `.zed/settings.json` contains:
     "ruff": {
       "binary": {
         "path": "mlt",
-        "arguments": ["lsp-proxy", "ruff", "server"]
+        "arguments": ["lsp-auto", "ruff", "server"]
       }
     },
     "basedpyright": {
       "binary": {
         "path": "mlt",
-        "arguments": ["lsp-proxy", "basedpyright-langserver", "--stdio"]
+        "arguments": ["lsp-auto", "basedpyright-langserver", "--stdio"]
       }
     }
   }
 }
 ```
+
+**Note**: `lsp-auto` automatically detects context:
+- Local (no docker-compose.yml): Direct passthrough to local LSP tools
+- Remote (has docker-compose.yml): Uses `lsp-proxy` with path translation
 
 #### Manual Testing
 
@@ -289,8 +294,9 @@ mlt container
 # Check project status
 mlt status
 
-# Test LSP proxy manually (should wait for input)
-mlt lsp-proxy ruff server
+# Test LSP commands
+mlt lsp-auto ruff --version    # Auto-detects context
+mlt lsp-proxy ruff server      # Direct proxy (manual testing)
 
 # Attach to container
 mlt attach
