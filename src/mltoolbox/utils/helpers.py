@@ -21,12 +21,21 @@ class RemoteConfig:
     port: int | None = None
 
 
+# Cache of keys we've already ensured are in the agent this session
+_keys_verified: set[str] = set()
+
+
 def ensure_key_in_agent(identity_file: str) -> bool:
     """Ensure the SSH key is loaded in the agent. Returns True if successful."""
-    logger = get_logger()
     key_path = Path(identity_file).expanduser().resolve()
+    key_str = str(key_path)
+
+    # Skip if we've already verified this key in this session
+    if key_str in _keys_verified:
+        return True
 
     if not key_path.exists():
+        logger = get_logger()
         logger.warning(f"Identity file not found: {key_path}")
         return False
 
@@ -37,12 +46,14 @@ def ensure_key_in_agent(identity_file: str) -> bool:
             capture_output=True,
             text=True,
         )
-        if str(key_path) in result.stdout or key_path.name in result.stdout:
+        if key_str in result.stdout or key_path.name in result.stdout:
+            _keys_verified.add(key_str)
             return True
     except Exception:
         pass
 
     # Key not loaded, add it
+    logger = get_logger()
     logger.info(f"Adding SSH key to agent: {key_path}")
     try:
         result = subprocess.run(
@@ -52,6 +63,7 @@ def ensure_key_in_agent(identity_file: str) -> bool:
         )
         if result.returncode == 0:
             logger.success(f"SSH key added: {key_path.name}")
+            _keys_verified.add(key_str)
             return True
         else:
             logger.warning(f"Failed to add SSH key: {result.stderr.strip()}")
