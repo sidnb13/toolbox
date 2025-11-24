@@ -39,7 +39,7 @@ COPY pyproject.toml uv.lock* ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system -e ".[${DEPENDENCY_TAGS}]" && \
     uv pip install --system ipdb ruff basedpyright && \
-    uv pip install --system "mlt-toolbox @ git+https://github.com/sidbaskaran/toolbox.git#subdirectory=src/mlt"
+    uv pip install --system "mlt-toolbox @ git+https://github.com/sidnb13/toolbox.git#subdirectory=src/mlt"
 
 # Create LSP view directory (will be mounted and hardlinked from real site-packages)
 RUN mkdir -p /opt/lsp-packages
