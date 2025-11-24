@@ -242,7 +242,6 @@ def connect(
 
     # Read existing config and filter out previous entries for this host/alias
     existing_config = []
-    current_host = None
     skip_block = False
 
     if ssh_config_path.exists():
@@ -250,12 +249,10 @@ def connect(
             for line in f:
                 if line.startswith("Host "):
                     current_host = line.split()[1].strip()
-                    # Skip this block if it matches our alias, regardless of host
+                    # Skip this block if it matches our alias
                     skip_block = current_host == remote.alias
                 if not skip_block:
                     existing_config.append(line)
-                elif not line.strip() or line.startswith("Host "):
-                    skip_block = False
 
     # Write updated config
     with ssh_config_path.open("w") as f:
