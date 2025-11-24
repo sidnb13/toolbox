@@ -21,6 +21,46 @@ class RemoteConfig:
     port: int | None = None
 
 
+def ensure_key_in_agent(identity_file: str) -> bool:
+    """Ensure the SSH key is loaded in the agent. Returns True if successful."""
+    logger = get_logger()
+    key_path = Path(identity_file).expanduser().resolve()
+
+    if not key_path.exists():
+        logger.warning(f"Identity file not found: {key_path}")
+        return False
+
+    # Check if key is already loaded
+    try:
+        result = subprocess.run(
+            ["ssh-add", "-l"],
+            capture_output=True,
+            text=True,
+        )
+        if str(key_path) in result.stdout or key_path.name in result.stdout:
+            return True
+    except Exception:
+        pass
+
+    # Key not loaded, add it
+    logger.info(f"Adding SSH key to agent: {key_path}")
+    try:
+        result = subprocess.run(
+            ["ssh-add", str(key_path)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            logger.success(f"SSH key added: {key_path.name}")
+            return True
+        else:
+            logger.warning(f"Failed to add SSH key: {result.stderr.strip()}")
+            return False
+    except Exception as e:
+        logger.warning(f"Failed to run ssh-add: {e}")
+        return False
+
+
 def get_ssh_config(
     alias: str,
     config_path: Path = Path("~/.config/mltoolbox/ssh/config"),
@@ -72,13 +112,17 @@ def remote_cmd(
     ssh_config = get_ssh_config(config.host)
     actual_hostname = ssh_config.get("hostname", config.host)
     actual_username = ssh_config.get("user", config.username)
-    identity_file = ssh_config.get("identityfile", [None])[0]
+    identity_file = config.identity_file or ssh_config.get("identityfile", [None])[0]
     port = config.port or ssh_config.get("port")
     if port is not None:
         try:
             port = int(port)
         except Exception:
             port = None
+
+    # Ensure identity file is loaded in SSH agent
+    if identity_file:
+        ensure_key_in_agent(identity_file)
 
     # Prepare command string for logging
     cmd_str = " ".join(command) if isinstance(command, list) else str(command)

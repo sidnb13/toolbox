@@ -141,6 +141,7 @@ class DB:
                     self.project_name = project_name
                     self.container_name = container_name
                     self.alias = alias or "dummy-alias"
+                    self.identity_file = identity_file
 
             return DummyRemote()
         git_name = os.getenv("GIT_NAME")
@@ -212,6 +213,8 @@ class DB:
                 if host:  # Only update host if explicitly provided
                     remote.host = host
                 remote.git_name = git_name
+                if identity_file:  # Update identity_file if provided
+                    remote.identity_file = identity_file
 
             if update_timestamp:
                 remote.last_used = datetime.now()

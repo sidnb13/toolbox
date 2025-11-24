@@ -10,14 +10,8 @@ from mltoolbox.utils.templates import generate_project_files
 
 
 @click.command()
-@click.argument("project_name")
 @click.option("--ray/--no-ray", default=True, help="Include Ray setup")
 @click.option("--force", is_flag=True, help="Force overwrite existing files")
-@click.option(
-    "--inside-project",
-    is_flag=True,
-    help="Initialize inside existing project",
-)
 @click.option(
     "--python-version",
     default="3.12.12",
@@ -30,34 +24,34 @@ from mltoolbox.utils.templates import generate_project_files
     help="Base image variant to use",
 )
 def init(
-    project_name: str,
     ray: bool,
     force: bool = False,
-    inside_project: bool = False,
     python_version: str = "3.12.12",
     variant: str = "cuda",
     ssh_key_name: str = "id_ed25519",
 ):
-    """Initialize a new ML project."""
+    """Initialize mltoolbox in the current project directory.
+
+    Must be run from the project root directory.
+    """
     if python_version and not re.match(r"^\d+\.\d+\.\d+$", python_version):
         raise click.ClickException(
             "Please specify the full Python version, e.g., 3.11.12"
         )
+
+    project_dir = Path.cwd()
+    project_name = project_dir.name
+
+    # Validate we're in a project root
+    if not (project_dir / "pyproject.toml").exists():
+        raise click.ClickException(
+            f"No pyproject.toml found in {project_dir}. "
+            "Please run this command from your project root directory."
+        )
+
     # Strip to major.minor for main container build
     python_version_major_minor = ".".join(python_version.split(".")[:2])
     load_dotenv(".env")
-    project_dir = Path(project_name) if not inside_project else Path.cwd()
-    project_name = project_dir.name
-
-    if (
-        not force
-        and any(project_dir.iterdir())
-        and not click.confirm(
-            f"Directory {project_name} exists. Continue?",
-            default=True,
-        )
-    ):
-        return
     # Build base image if it doesn't exist
     git_name = os.getenv("GIT_NAME")
     if not git_name:

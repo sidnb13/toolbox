@@ -189,6 +189,11 @@ def connect(
     # Get or create/update remote and project
     if not host:
         raise click.ClickException("Host must be specified and not None.")
+
+    # Expand identity file path if provided
+    if identity_file:
+        identity_file = str(Path(identity_file).expanduser().resolve())
+
     remote = db.upsert_remote(
         username=username,
         host=str(host),
@@ -213,9 +218,7 @@ def connect(
         host=remote.host,
         username=remote.username,
         working_dir=f"~/projects/{project_name}",
-        identity_file=str(remote.identity_file)
-        if remote.identity_file
-        else str(Path.home() / ".ssh/id_ed25519"),
+        identity_file=str(remote.identity_file) if remote.identity_file else None,
         port=port,
     )
 
