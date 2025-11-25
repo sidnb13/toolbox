@@ -1,8 +1,9 @@
-import datetime
 import os
+import re
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -285,10 +286,11 @@ def update_env_file(
     """Update environment file with new values, preserving existing variables."""
     logger = get_logger()
     if dryrun:
-        with logger.panel_output(
-            "Update .env File", subtitle="[DRY RUN]", status="success"
-        ) as panel:
-            panel.write(
+        with logger.command_output(
+            command="update .env file",
+            status="success",
+        ) as cmd_output:
+            cmd_output.write(
                 f"Would update .env with: {updates}\nSimulated update, no changes made."
             )
         logger.success("[DRY RUN] .env file update simulated.")
@@ -334,10 +336,11 @@ def update_env_file(
 
     except Exception as e:
         logger = get_logger()
-        with logger.panel_output(
-            "Environment File Update Failed", subtitle="Configuration Error"
-        ) as panel:
-            panel.write(f"Failed to update .env file: {str(e)}")
+        with logger.command_output(
+            command="update .env file",
+            status="failed",
+        ) as cmd_output:
+            cmd_output.write(f"Failed to update .env file: {str(e)}")
         raise
 
 
@@ -359,10 +362,11 @@ def setup_remote_ssh_keys(remote_config: RemoteConfig, ssh_key_name: str = None)
     ).stdout.strip()
 
     if key_check == "missing":
-        with logger.panel_output(
-            "SSH Key Not Found", subtitle="Configuration Error"
-        ) as panel:
-            panel.write(f"SSH key '{ssh_key_name}' not found on remote host")
+        with logger.command_output(
+            command="check SSH key",
+            status="failed",
+        ) as cmd_output:
+            cmd_output.write(f"SSH key '{ssh_key_name}' not found on remote host")
         return False
 
     # Setup agent and add key - ONLY ON THE HOST, NOT IN CONTAINER
@@ -392,20 +396,22 @@ def setup_remote_ssh_keys(remote_config: RemoteConfig, ssh_key_name: str = None)
         )
 
         if "The agent has no identities" in result.stdout:
-            with logger.panel_output(
-                "SSH Agent Setup Failed", subtitle="Authentication Error"
-            ) as panel:
-                panel.write("Failed to add SSH key to agent")
+            with logger.command_output(
+                command="setup SSH agent",
+                status="failed",
+            ) as cmd_output:
+                cmd_output.write("Failed to add SSH key to agent")
             return False
 
         logger.success("SSH key added successfully to host SSH agent")
         return True
 
     except Exception as e:
-        with logger.panel_output(
-            "SSH Agent Setup Failed", subtitle="Authentication Error"
-        ) as panel:
-            panel.write(f"Failed to set up SSH agent: {str(e)}")
+        with logger.command_output(
+            command="setup SSH agent",
+            status="failed",
+        ) as cmd_output:
+            cmd_output.write(f"Failed to set up SSH agent: {str(e)}")
         return False
 
 
@@ -518,6 +524,7 @@ def generate_sync_preview(root_path: Path, exclude_patterns: list[str]) -> dict:
                 ".env",
                 ".gitignore",
                 ".dockerignore",
+                ".mlt",  # mltoolbox config directory
             ]:
                 continue
 
@@ -560,31 +567,49 @@ def print_sync_preview(logger, root_path: Path, exclude_patterns: list[str]):
     """Print a preview of what will be synced."""
     preview = generate_sync_preview(root_path, exclude_patterns)
 
-    with logger.panel_output(
-        "Sync Preview", subtitle=f"First-level contents of {root_path.name}"
-    ) as panel:
-        # Print directories
-        if preview["directories"]:
-            panel.write("📁 Directories:")
-            for dir_name, count in preview["directories"]:
-                count_str = f"{count} items" if isinstance(count, int) else count
-                panel.write(f"  ├─ {dir_name}/ ({count_str})")
+    # Use compact tree-style format
+    now = datetime.now().strftime("%H:%M:%S")
+    indicator = "[blue]●[/blue]"
+    cmd_name = f"sync preview ({root_path.name})"
 
-        # Print files
-        if preview["files"]:
-            panel.write("\n📄 Files:")
-            for file_name, size in preview["files"]:
-                panel.write(f"  ├─ {file_name} ({size})")
+    logger.console.print(f"{now}  {indicator}  [dim]{cmd_name}[/dim]")
 
-        # Summary
-        total_dirs = len(preview["directories"])
-        total_files = len(preview["files"])
-        panel.write(
-            f"\n📊 Total: {total_dirs} directories, {total_files} files at root level"
-        )
-        panel.write(
-            f"🚫 Excluding {len(exclude_patterns)} patterns from .gitignore and defaults"
-        )
+    # Build content lines
+    content_lines = []
+
+    # Print directories
+    if preview["directories"]:
+        for dir_name, count in preview["directories"]:
+            count_str = f"{count} items" if isinstance(count, int) else count
+            content_lines.append(f"📁 {dir_name}/ ({count_str})")
+
+    # Print files
+    if preview["files"]:
+        for file_name, size in preview["files"]:
+            content_lines.append(f"📄 {file_name} ({size})")
+
+    # Summary
+    total_dirs = len(preview["directories"])
+    total_files = len(preview["files"])
+    content_lines.append(f"📊 Total: {total_dirs} directories, {total_files} files")
+    content_lines.append(f"🚫 Excluding {len(exclude_patterns)} patterns")
+
+    # Print with tree indentation
+    if content_lines:
+        max_output_lines = 10  # Show more lines for preview
+        output_lines = content_lines[:max_output_lines]
+        total_lines = len(output_lines)
+
+        for idx, line in enumerate(output_lines):
+            if idx == total_lines - 1:
+                prefix = "      └─ "
+            else:
+                prefix = "      │  "
+            logger.console.print(f"{prefix}[dim]{line}[/dim]")
+
+        if len(content_lines) > max_output_lines:
+            remaining = len(content_lines) - max_output_lines
+            logger.console.print(f"      └─ [dim]... ({remaining} more items)[/dim]")
 
 
 def verify_env_vars(remote: RemoteConfig | None = None, dryrun: bool = False) -> dict:  # noqa: FA100
@@ -779,7 +804,7 @@ def sync_project(
     rsync_cmd = [
         "rsync",
         "-avz",  # archive, verbose, compress
-        "--progress",  # Show progress during transfer
+        "--progress",  # Show progress during transfer (compatible with older rsync)
         "--stats",  # Show detailed transfer statistics
         "--no-owner",  # Don't sync owner
         "--no-group",  # Don't sync group
@@ -802,11 +827,18 @@ def sync_project(
     )
 
     try:
-        logger.section("Starting project sync")
-        logger.info(f"From: {project_root}")
-        logger.info(f"To: {remote_config.host}:~/projects/{remote_path}")
+        # Display sync info in compact tree format
+        now = datetime.now().strftime("%H:%M:%S")
+        logger.console.print(
+            f"{now}  [bold blue]●[/bold blue]  [bold]Starting project sync[/bold]"
+        )
+        logger.console.print(f"      ├─ [dim]From:[/dim] {project_root}")
+        logger.console.print(
+            f"      └─ [dim]To:[/dim] {remote_config.host}:~/projects/{remote_path}"
+        )
 
-        # Run rsync and stream output in real-time
+        # Run rsync with progress bar
+        # Note: rsync sends progress to stdout, errors to stderr
         process = subprocess.Popen(
             rsync_cmd,
             stdout=subprocess.PIPE,
@@ -815,34 +847,239 @@ def sync_project(
             bufsize=1,
         )
 
-        # Print stdout in real-time
-        while True:
-            output = process.stdout.readline()
-            if output == "" and process.poll() is not None:
-                break
-            if output:
-                logger.debug(output.rstrip())
+        # Parse rsync progress output and display progress bar
+        from rich.progress import (
+            BarColumn,
+            FileSizeColumn,
+            Progress,
+            TextColumn,
+            TimeRemainingColumn,
+            TransferSpeedColumn,
+        )
+
+        # Regex patterns for rsync --progress output
+        # Actual format from stderr:
+        # 1. "Transfer starting: N files"
+        # 2. "filename.ext" (standalone line)
+        # 3. "          10000 100%  179.37MB/s   00:00:00 (xfer#1, to-check=0/1)"
+        #    Format: spaces + size + percentage + speed + time + optional transfer info
+
+        transfer_starting_pattern = re.compile(r"Transfer starting:\s+(\d+)\s+files")
+        # Progress line after strip: "50000 100%  85.62MB/s   00:00:00 (xfer#1, to-check=1/2)"
+        # Format: size + space + percentage + space + speed + space + time
+        file_progress_pattern = re.compile(
+            r"^(\d+(?:,\d+)*)\s+(\d+)%\s+([\d.]+)([kKMGT]?B/s)\s+(\d+:\d+:\d+)"
+        )
+        # Match total bytes from stats (stdout)
+        total_bytes_pattern = re.compile(r"total size is\s+(\d+(?:,\d+)*)")
+
+        total_bytes = None
+        bytes_transferred = 0
+        completed_files = {}  # Track completed files to avoid double counting
+        current_file = "Scanning files..."
+        current_file_size = 0
+        last_update_time = time.time()
+        stderr_output = []  # Capture stderr for error reporting
+        expecting_filename = False  # Track if we're expecting a filename line
+
+        progress = Progress(
+            TextColumn("[bold blue]{task.description}", justify="right"),
+            BarColumn(bar_width=None),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            " ",
+            FileSizeColumn(),
+            " ",
+            TransferSpeedColumn(),
+            " ",
+            TimeRemainingColumn(),
+            console=logger.console,
+            transient=True,
+        )
+
+        with progress:
+            task = progress.add_task(
+                "[dim]Syncing files...[/dim]",
+                total=None,  # Unknown total initially
+            )
+
+            # Read stdout for progress (rsync sends progress to stdout!)
+            # stderr is only for errors
+            import threading
+
+            def read_stdout():
+                nonlocal \
+                    bytes_transferred, \
+                    total_bytes, \
+                    current_file, \
+                    current_file_size, \
+                    completed_files, \
+                    last_update_time, \
+                    expecting_filename
+                for line in process.stdout:
+                    if not line:
+                        continue
+                    line_stripped = line.strip()
+                    if not line_stripped:
+                        continue
+
+                    # Parse "Transfer starting: N files"
+                    match = transfer_starting_pattern.match(line_stripped)
+                    if match:
+                        expecting_filename = True
+                        continue
+
+                    # Parse filename (standalone line, no leading spaces, not stats)
+                    if (
+                        expecting_filename
+                        and not line_stripped.startswith(" ")
+                        and not line_stripped.startswith("sent")
+                        and not line_stripped.startswith("total")
+                    ):
+                        # This is a filename
+                        full_filename = line_stripped
+                        current_file = full_filename.split("/")[-1]
+                        if len(current_file) > 50:
+                            current_file = current_file[:47] + "..."
+                        expecting_filename = False
+                        # Initialize tracking for this file
+                        if full_filename not in completed_files:
+                            completed_files[full_filename] = 0
+                        progress.update(
+                            task,
+                            description=f"[dim]{current_file}[/dim]",
+                        )
+                        continue
+
+                    # Parse progress line (starts with spaces, has numbers and %)
+                    match = file_progress_pattern.match(line_stripped)
+                    if match:
+                        (
+                            size_str,
+                            percent,
+                            speed_val,
+                            speed_unit,
+                            time_remaining,
+                        ) = match.groups()
+
+                        # Convert size to bytes
+                        size_bytes = int(size_str.replace(",", ""))
+                        current_file_size = size_bytes
+                        percent_int = int(percent)
+
+                        # Get current file being processed
+                        full_filename = current_file  # Use the last filename we saw
+                        if full_filename not in completed_files:
+                            completed_files[full_filename] = 0
+
+                        # Calculate bytes for this file based on percentage
+                        file_bytes_transferred = int((percent_int / 100) * size_bytes)
+
+                        # When file reaches 100%, mark it as completed
+                        if percent_int == 100:
+                            # File completed - add remaining bytes
+                            if completed_files[full_filename] < size_bytes:
+                                bytes_transferred += (
+                                    size_bytes - completed_files[full_filename]
+                                )
+                                completed_files[full_filename] = size_bytes
+                        else:
+                            # File in progress - update bytes
+                            if completed_files[full_filename] < file_bytes_transferred:
+                                bytes_transferred += (
+                                    file_bytes_transferred
+                                    - completed_files[full_filename]
+                                )
+                                completed_files[full_filename] = file_bytes_transferred
+
+                        # Update progress
+                        if total_bytes:
+                            progress.update(
+                                task,
+                                completed=min(bytes_transferred, total_bytes),
+                                total=total_bytes,
+                                description=f"[dim]{current_file} ({percent}%)[/dim]",
+                            )
+                        else:
+                            # Indeterminate progress - show current file and percentage
+                            progress.update(
+                                task,
+                                completed=bytes_transferred,
+                                description=f"[dim]{current_file} ({percent}%)[/dim]",
+                            )
+                        continue
+
+                    # Parse "total size is X" from stats (also in stdout)
+                    match = total_bytes_pattern.search(line_stripped)
+                    if match:
+                        total_bytes = int(match.group(1).replace(",", ""))
+                        progress.update(task, total=total_bytes)
+                        continue
+
+                    # Log other stdout lines as debug
+                    logger.debug(line_stripped)
+
+            def read_stderr():
+                # Capture stderr for error reporting only
+                nonlocal stderr_output
+                for line in process.stderr:
+                    stderr_output.append(line)
+                    if line.strip():
+                        logger.debug(f"rsync stderr: {line.strip()}")
+
+            # Start threads to read both streams
+            # stdout has progress, stderr has errors
+            stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+            stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+            stdout_thread.start()
+            stderr_thread.start()
+
+            # Wait for process to complete
+            process.wait()
+
+            # Wait for threads to finish reading
+            stdout_thread.join(timeout=2)
+            stderr_thread.join(timeout=2)
 
         if process.returncode == 0:
             logger.success("Sync completed successfully!")
+            # Show summary of what was synced
+            preview = generate_sync_preview(project_root, all_excludes)
+            total_dirs = len(preview["directories"])
+            total_files = len(preview["files"])
+            if total_dirs > 0 or total_files > 0:
+                logger.summary(
+                    "Sync Summary",
+                    [
+                        f"{total_dirs} directories synced",
+                        f"{total_files} files synced",
+                        f"Excluded {len(all_excludes)} patterns",
+                    ],
+                )
         else:
-            stderr = process.stderr.read()
+            # Use captured stderr output from the thread
+            stderr_text = "".join(stderr_output) if stderr_output else ""
             raise subprocess.CalledProcessError(
-                process.returncode, rsync_cmd, stderr=stderr
+                process.returncode, rsync_cmd, stderr=stderr_text
             )
 
     except subprocess.CalledProcessError as e:
         logger = get_logger()
-        error_content = []
-        error_content.append(f"Exit code: {e.returncode}")
+        error_details = []
         if e.stderr:
-            error_content.append("Error output:")
-            error_content.append(e.stderr)
+            error_details.append(e.stderr)
+        if e.stdout:
+            if error_details:
+                error_details.append(f"\nstdout: {e.stdout}")
+            else:
+                error_details.append(e.stdout)
 
-        with logger.panel_output(
-            "Project Sync Failed", subtitle="Rsync Error"
-        ) as panel:
-            panel.write("\n".join(error_content))
+        with logger.command_output(
+            command="rsync sync",
+            status="failed",
+            exit_code=e.returncode,
+        ) as cmd_output:
+            if error_details:
+                cmd_output.write("\n".join(error_details))
 
         raise click.ClickException("Failed to sync project files")
 
@@ -1000,10 +1237,12 @@ def run_rclone_sync(
             logger.success(result_msg)
         else:
             result_msg += f"failed with exit code {exit_code}"
-            with logger.panel_output(
-                "Rclone Sync Failed", subtitle=f"Exit code: {exit_code}"
-            ) as panel:
-                panel.write(result_msg)
+            with logger.command_output(
+                command="rclone sync",
+                status="failed",
+                exit_code=exit_code,
+            ) as cmd_output:
+                cmd_output.write(result_msg)
 
         # Append to history log
         with open(history_path, "a") as history_file:
@@ -1013,8 +1252,9 @@ def run_rclone_sync(
             raise click.ClickException(f"rclone sync failed with exit code {exit_code}")
 
     except Exception as e:
-        with logger.panel_output(
-            "Rclone Sync Error", subtitle="Unexpected Error"
-        ) as panel:
-            panel.write(f"Error during sync: {str(e)}")
+        with logger.command_output(
+            command="rclone sync",
+            status="failed",
+        ) as cmd_output:
+            cmd_output.write(f"Error during sync: {str(e)}")
         raise click.ClickException(str(e))

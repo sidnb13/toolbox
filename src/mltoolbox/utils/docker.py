@@ -473,10 +473,11 @@ def start_container(
 ) -> None:
     logger = get_logger()
     if dryrun:
-        with logger.panel_output(
-            f"Start Container: {container_name}", subtitle="[DRY RUN]", status="success"
-        ) as panel:
-            panel.write(
+        with logger.command_output(
+            command=f"start container {container_name}",
+            status="success",
+        ) as cmd_output:
+            cmd_output.write(
                 f"Would start container: {container_name} for project {project_name}\nSimulated Docker start, no actions taken."
             )
         logger.success("[DRY RUN] Container start simulated.")
@@ -574,12 +575,14 @@ def start_container(
     )
 
     # Start in detached mode with explicit env vars
+    # Docker compose files live in .mlt/ subdirectory
     if remote_config:
         # For remote, prepend env vars to the command
+        # cd into .mlt/ where docker-compose.yml lives
         env_string = " ".join([f"{k}={v}" for k, v in env_vars.items()])
         env_string = f"COMPOSE_BAKE=true {env_string}"  # Always set COMPOSE_BAKE
 
-        base_cmd = f"{env_string} docker compose up -d"
+        base_cmd = f"cd .mlt && {env_string} docker compose up -d"
         if build:
             base_cmd += " --build"
 
@@ -589,7 +592,13 @@ def start_container(
         base_cmd += f" {service_name}"
         cmd_wrap([base_cmd])
     else:
-        # For local, use environment parameter
+        # For local, run from .mlt/ directory
+        mlt_dir = Path.cwd() / ".mlt"
+        if not mlt_dir.exists():
+            raise click.ClickException(
+                f".mlt directory not found in {Path.cwd()}. Run 'mltoolbox init' first."
+            )
+
         env_vars = env_vars.copy()
         env_vars["COMPOSE_BAKE"] = "true"
         base_cmd = ["docker", "compose", "up", "-d"]
@@ -603,6 +612,7 @@ def start_container(
         subprocess.run(
             base_cmd,
             env=env_vars,
+            cwd=mlt_dir,  # Run from .mlt/ directory
             stdout=None,
             stderr=None,
             text=True,

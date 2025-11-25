@@ -125,10 +125,11 @@ class DB:
             from mltoolbox.utils.logger import get_logger
 
             logger = get_logger()
-            with logger.panel_output(
-                "Upsert Remote", subtitle="[DRY RUN]", status="success"
-            ) as panel:
-                panel.write(
+            with logger.command_output(
+                command="upsert remote",
+                status="success",
+            ) as cmd_output:
+                cmd_output.write(
                     f"Would upsert remote: {username}@{host} for project {project_name}\nSimulated DB write, no changes made."
                 )
             logger.success("[DRY RUN] Remote upsert simulated.")

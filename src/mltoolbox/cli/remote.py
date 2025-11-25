@@ -1,6 +1,7 @@
 import os
 import re
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -276,7 +277,8 @@ def connect(
 
     logger = get_logger()
 
-    logger.info(f"Access your instance with `ssh {remote.alias}`")
+    logger.console.print()  # Spacing
+    logger.hint(f"Access your instance anytime with: [cyan]ssh {remote.alias}[/cyan]")
 
     if not dryrun:
         setup_zshrc(remote_config)
@@ -294,6 +296,8 @@ def connect(
     else:
         logger.info("[DRYRUN] Would create remote project directories (skipped)")
 
+    # Check system requirements
+    logger.console.print()  # Spacing before system checks
     if not dryrun:
         check_docker_group(remote_config, force=yes)
         logger.success("Docker group checked")
@@ -316,6 +320,7 @@ def connect(
         logger.info("[DRYRUN] Would ensure remote directory exists (skipped)")
 
     # Simple sync - no worktree detection or special handling
+    logger.console.print()  # Spacing before sync
     if not skip_sync:
         sync_project(
             remote_config,
@@ -325,6 +330,7 @@ def connect(
             dryrun=dryrun,
             force=yes,
         )
+        logger.console.print()  # Spacing after sync
     else:
         logger.info("Skipping project sync, continuing with SSH key sync...")
 
@@ -408,6 +414,7 @@ def connect(
         port_mappings={"ray_dashboard": host_ray_dashboard_port},
     )
 
+    logger.console.print()  # Spacing before container start
     logger.step("Starting remote container")
 
     start_container(
@@ -460,18 +467,34 @@ def connect(
         ssh_args.extend(["-p", str(port)])
 
     # Print URL information to console
-    logger.section("Service URLs")
+    # Display service URLs in compact tree format
+    now = datetime.now().strftime("%H:%M:%S")
+    logger.console.print(f"{now}  [bold blue]●[/bold blue]  [bold]Service URLs[/bold]")
 
     # Add Ray dashboard port forwarding
     ssh_args.extend(["-L", f"{host_ray_dashboard_port}:localhost:8265"])
-    logger.info(f"Ray Dashboard: http://localhost:{host_ray_dashboard_port}")
+    logger.console.print(
+        f"      ├─ [dim]Ray Dashboard:[/dim] [cyan]http://localhost:{host_ray_dashboard_port}[/cyan]"
+    )
 
     # Add additional user-specified port forwarding
+    port_mappings_list = []
     for port_mapping in forward_ports:
         if port_mapping:
             local_port, remote_port = port_mapping.split(":")
             ssh_args.extend(["-L", f"{local_port}:localhost:{remote_port}"])
-            logger.info(f"Custom port: {local_port} -> {remote_port}")
+            port_mappings_list.append((local_port, remote_port))
+
+    for idx, (local_port, remote_port) in enumerate(port_mappings_list):
+        prefix = "      └─ " if idx == len(port_mappings_list) - 1 else "      ├─ "
+        logger.console.print(
+            f"{prefix}[dim]Port:[/dim] [cyan]{local_port}[/cyan] → {remote_port}"
+        )
+
+    # Add spacing before connection
+    logger.console.print()
+    logger.hint(f"Connecting to {container_name} on {remote.host}...")
+    logger.console.print()
 
     # Add remaining SSH arguments
     ssh_args.extend(["-t", f"{remote.username}@{remote.host}", cmd])
@@ -490,21 +513,43 @@ def list_remotes():  # noqa: A001
         remotes = session.query(Remote).options(joinedload(Remote.projects)).all()
 
         if not remotes:
-            logger.info("No remotes found")
+            logger.empty_state(
+                "No remotes configured",
+                "Use 'mltoolbox remote connect <host>' to add one",
+            )
             return
 
-        logger.section("Configured remotes")
-        for remote in remotes:
-            logger.info(f"{remote.alias}:")
-            logger.info(f"  Host: {remote.host}")
-            logger.info(f"  Last used: {remote.last_used}")
+        # Display remotes in compact tree format
+        now = datetime.now().strftime("%H:%M:%S")
+        logger.console.print(
+            f"{now}  [bold blue]●[/bold blue]  [bold]Configured remotes[/bold]"
+        )
+
+        for idx, remote in enumerate(remotes):
+            is_last_remote = idx == len(remotes) - 1
+            prefix_main = "      └─ " if is_last_remote else "      ├─ "
+            prefix_sub = "         " if is_last_remote else "      │  "
+
+            logger.console.print(f"{prefix_main}[bold]{remote.alias}[/bold]")
+            logger.console.print(f"{prefix_sub}[dim]Host:[/dim] {remote.host}")
+            logger.console.print(
+                f"{prefix_sub}[dim]Last used:[/dim] {remote.last_used}"
+            )
 
             # Show all projects associated with this remote
             if remote.projects:
-                logger.info("  Projects:")
-                for project in remote.projects:
-                    logger.info(f"    - {project.name}")
-                    logger.info(f"      Container: {project.container_name}")
+                logger.console.print(f"{prefix_sub}[dim]Projects:[/dim]")
+                for proj_idx, project in enumerate(remote.projects):
+                    is_last_proj = proj_idx == len(remote.projects) - 1
+                    proj_prefix = (
+                        "         └─ "
+                        if (is_last_remote and is_last_proj)
+                        else "         ├─ "
+                    )
+                    logger.console.print(f"{proj_prefix}[dim]{project.name}[/dim]")
+                    logger.console.print(
+                        f"{prefix_sub}    [dim]Container:[/dim] {project.container_name}"
+                    )
 
 
 @remote.command()
@@ -546,7 +591,9 @@ def sync(host_or_alias, exclude, port):
     sync_project(remote_config, project_name, exclude=exclude)
 
     logger = get_logger()
+    logger.console.print()  # Spacing
     logger.success(f"Synced project files with remote host {host_or_alias}")
+    logger.hint("Use 'mltoolbox remote sync' to sync again later")
 
 
 @remote.command()
@@ -849,7 +896,8 @@ def datasync(
         )
 
         # Execute inside container
-        docker_cmd = f"cd ~/projects/{project_name} && docker compose exec {container_name} {' '.join(rclone_cmd)}"
+        # Docker compose files live in .mlt/ subdirectory
+        docker_cmd = f"cd ~/projects/{project_name}/.mlt && docker compose exec {container_name} {' '.join(rclone_cmd)}"
         if remote_config is None:
             raise click.ClickException("Remote config is required for container mode.")
         remote_cmd(

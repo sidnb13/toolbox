@@ -1,10 +1,12 @@
+# Docker Compose config for mltoolbox
+# This file lives in .mlt/ - build context points to parent (project root)
 services:
   {{ container_name | lower }}:
     env_file:
-      - .env
+      - ../.env  # .env stays in project root for easy access
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..  # Build context is project root (parent of .mlt/)
+      dockerfile: .mlt/Dockerfile  # Dockerfile path relative to context
       args:
         PYTHON_VERSION: ${PYTHON_VERSION}
         GIT_NAME: ${GIT_NAME}
@@ -18,7 +20,7 @@ services:
     working_dir: /workspace/${PROJECT_NAME}
     network_mode: host  # Use host networking
     volumes:
-      - .:/workspace/${PROJECT_NAME}
+      - ..:/workspace/${PROJECT_NAME}  # Mount project root (parent of .mlt/)
       - ~/.config/rclone:/root/.config/rclone
       - ~/.claude:/root/.claude
       - /var/run/docker.sock:/var/run/docker.sock

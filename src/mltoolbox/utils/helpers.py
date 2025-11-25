@@ -1,6 +1,6 @@
+import os
 import subprocess
 import time
-import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,34 +39,96 @@ def ensure_key_in_agent(identity_file: str) -> bool:
         logger.warning(f"Identity file not found: {key_path}")
         return False
 
-    # Check if key is already loaded
+    # Ensure SSH agent is running (managed by session manager)
+    if not session_manager.ensure_ssh_agent():
+        logger = get_logger()
+        sock_path = os.environ.get("SSH_AUTH_SOCK", "not set")
+        logger.warning(f"SSH agent is not available (SSH_AUTH_SOCK={sock_path})")
+        return False
+
+    logger = get_logger()
+
+    # Check if key is already loaded by comparing fingerprints
     try:
-        result = subprocess.run(
-            ["ssh-add", "-l"],
+        # Get fingerprint of the key file
+        fingerprint_result = subprocess.run(
+            ["ssh-keygen", "-lf", str(key_path)],
             capture_output=True,
             text=True,
         )
-        if key_str in result.stdout or key_path.name in result.stdout:
-            _keys_verified.add(key_str)
-            return True
+        if fingerprint_result.returncode == 0:
+            # Extract fingerprint (format: "2048 SHA256:... /path/to/key (ED25519)")
+            key_fingerprint = (
+                fingerprint_result.stdout.split()[1]
+                if len(fingerprint_result.stdout.split()) > 1
+                else None
+            )
+
+            # Check what's in the agent
+            agent_result = subprocess.run(
+                ["ssh-add", "-l"],
+                capture_output=True,
+                text=True,
+                env=os.environ.copy(),
+            )
+            if agent_result.returncode == 0 and key_fingerprint:
+                # Check if this fingerprint is already in the agent
+                if key_fingerprint in agent_result.stdout:
+                    _keys_verified.add(key_str)
+                    return True
     except Exception:
-        pass
+        # Fallback to simple path matching if fingerprint check fails
+        try:
+            result = subprocess.run(
+                ["ssh-add", "-l"],
+                capture_output=True,
+                text=True,
+                env=os.environ.copy(),
+            )
+            if result.returncode == 0:
+                # Check if path appears in output (ssh-add -l shows full paths)
+                if key_str in result.stdout or str(key_path) in result.stdout:
+                    _keys_verified.add(key_str)
+                    return True
+        except Exception:
+            pass
 
     # Key not loaded, add it
-    logger = get_logger()
+    # Double-check agent is still available right before adding
+    sock_path = os.environ.get("SSH_AUTH_SOCK")
+    if sock_path and not os.path.exists(sock_path):
+        logger.warning(
+            f"SSH agent socket no longer exists: {sock_path}, reinitializing..."
+        )
+        if not session_manager.ensure_ssh_agent():
+            logger.warning("Failed to reinitialize SSH agent")
+            return False
+
     logger.info(f"Adding SSH key to agent: {key_path}")
     try:
         result = subprocess.run(
             ["ssh-add", str(key_path)],
             capture_output=True,
             text=True,
+            env=os.environ.copy(),
         )
         if result.returncode == 0:
             logger.success(f"SSH key added: {key_path.name}")
             _keys_verified.add(key_str)
             return True
+        elif "is already in the agent" in result.stderr.lower():
+            # Key was already there, just add to cache
+            _keys_verified.add(key_str)
+            return True
         else:
-            logger.warning(f"Failed to add SSH key: {result.stderr.strip()}")
+            error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+            logger.warning(f"Failed to add SSH key: {error_msg}")
+            # If agent connection failed, mark agent as uninitialized so it gets restarted next time
+            if (
+                "Error connecting to agent" in error_msg
+                or "No such file or directory" in error_msg
+            ):
+                session_manager.reset_agent_state()
             return False
     except Exception as e:
         logger.warning(f"Failed to run ssh-add: {e}")
@@ -275,51 +337,47 @@ def remote_cmd(
             error_str = "".join(error)
         duration = time.time() - start_time
         if exit_code != 0:
-            error_content = []
-            error_content.append("CONTEXT")
-            error_content.append(f"Remote Directory: {remote_cwd}")
-            error_content.append(f"Working Directory: {config.working_dir or 'None'}")
-            error_content.append("")
-            error_content.append("CONNECTION")
-            error_content.append(f"Host: {actual_hostname}")
-            error_content.append(f"User: {actual_username}")
-            error_content.append("")
-            error_content.append("COMMAND")
-            error_content.append(f"{full_cmd}")
-            error_content.append("")
-            error_content.append("ERROR DETAILS")
-            error_content.append(f"Exit Code: {exit_code}")
+            # Build error details for compact display
+            error_details = []
             if error_str:
-                error_content.append(f"stderr: {error_str}")
+                error_details.append(error_str)
             if output_str:
-                error_content.append(f"stdout: {output_str}")
+                if error_details:
+                    error_details.append(f"\nstdout: {output_str}")
+                else:
+                    error_details.append(output_str)
+
+            # Show context in debug mode only
             if logger.logger.level <= 10:  # DEBUG level
-                stack_trace = "".join(traceback.format_stack())
-                error_content.append("")
-                error_content.append("STACK TRACE")
-                error_content.append(stack_trace)
-            with logger.panel_output(
-                "Remote Command Failed",
-                subtitle=f"Exit code: {exit_code}",
+                error_details.insert(0, f"Host: {actual_hostname}, Dir: {remote_cwd}")
+
+            with logger.command_output(
+                command=display_cmd,
                 status="failed",
                 exit_code=exit_code,
                 duration=duration,
-            ) as panel:
-                panel.write("\n".join(error_content))
+            ) as cmd_output:
+                if error_details:
+                    cmd_output.write("\n".join(error_details))
             raise click.ClickException("Remote command execution failed")
-        # Success panel for non-live commands
+        # Success output for non-live commands - use compact format
         if not (is_docker_command or is_verbose_command):
-            with logger.panel_output(
-                "Remote Command Output",
-                subtitle=f"Exit code: {exit_code}",
+            combined_output = ""
+            if output_str:
+                combined_output = output_str
+            if error_str:
+                if combined_output:
+                    combined_output += "\n" + error_str
+                else:
+                    combined_output = error_str
+            with logger.command_output(
+                command=display_cmd,
                 status="success",
                 exit_code=exit_code,
                 duration=duration,
-            ) as panel:
-                if output_str:
-                    panel.write(output_str)
-                if error_str:
-                    panel.write("\nSTDERR:\n" + error_str)
+            ) as cmd_output:
+                if combined_output:
+                    cmd_output.write(combined_output)
         return subprocess.CompletedProcess(
             args=full_cmd,
             returncode=exit_code,
@@ -328,14 +386,26 @@ def remote_cmd(
         )
 
     except paramiko.SSHException as e:
-        with logger.panel_output(
-            "SSH Connection Failed", subtitle="Connection Error"
-        ) as panel:
-            panel.write(f"Failed to establish SSH connection: {str(e)}")
+        cmd_display = (
+            display_cmd
+            if "display_cmd" in locals()
+            else (full_cmd if "full_cmd" in locals() else "remote command")
+        )
+        with logger.command_output(
+            command=cmd_display,
+            status="failed",
+        ) as cmd_output:
+            cmd_output.write(f"SSH connection failed: {str(e)}")
         raise click.ClickException("SSH connection failed")
     except Exception as e:
-        with logger.panel_output(
-            "Command Execution Failed", subtitle="Unexpected Error"
-        ) as panel:
-            panel.write(f"An unexpected error occurred: {str(e)}")
+        cmd_display = (
+            display_cmd
+            if "display_cmd" in locals()
+            else (full_cmd if "full_cmd" in locals() else "remote command")
+        )
+        with logger.command_output(
+            command=cmd_display,
+            status="failed",
+        ) as cmd_output:
+            cmd_output.write(f"Unexpected error: {str(e)}")
         raise click.ClickException("Command execution failed")

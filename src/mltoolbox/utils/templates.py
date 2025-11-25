@@ -115,9 +115,22 @@ def generate_project_files(
     python_version: str = "3.12",
     variant: str = "cuda",
 ) -> None:
-    """Generate project files from templates"""
-    # Create directory structure
-    (project_dir / "scripts").mkdir(exist_ok=True)
+    """Generate project files from templates.
+
+    Files are organized into a .mlt/ subdirectory to keep the project root clean:
+    - .mlt/Dockerfile
+    - .mlt/docker-compose.yml
+    - .mlt/scripts/entrypoint.sh
+    - .mlt/scripts/ray-init.sh (if ray enabled)
+
+    The .env file remains in project root for easy user access.
+    """
+    # Create .mlt directory structure
+    mlt_dir = project_dir / ".mlt"
+    mlt_dir.mkdir(exist_ok=True)
+    (mlt_dir / "scripts").mkdir(exist_ok=True)
+
+    # Assets directory stays in project root (user content)
     (project_dir / "assets").mkdir(exist_ok=True)
 
     if files is not None:
@@ -125,7 +138,7 @@ def generate_project_files(
         base_entrypoint_content = (
             files("mltoolbox") / "base" / "scripts" / "entrypoint.sh"
         ).read_bytes()
-        project_entrypoint = project_dir / "scripts/entrypoint.sh"
+        project_entrypoint = mlt_dir / "scripts/entrypoint.sh"
         project_entrypoint.write_bytes(base_entrypoint_content)
         project_entrypoint.chmod(0o755)  # Make executable
 
@@ -134,7 +147,7 @@ def generate_project_files(
             base_ray_init_content = (
                 files("mltoolbox") / "base" / "scripts" / "ray-init.sh"
             ).read_bytes()
-            project_ray_init = project_dir / "scripts/ray-init.sh"
+            project_ray_init = mlt_dir / "scripts/ray-init.sh"
             project_ray_init.write_bytes(base_ray_init_content)
             project_ray_init.chmod(0o755)  # Make executable
     else:
@@ -142,7 +155,7 @@ def generate_project_files(
         base_entrypoint = Path(
             pkg_resources.resource_filename("mltoolbox", "base/scripts/entrypoint.sh")
         )
-        project_entrypoint = project_dir / "scripts/entrypoint.sh"
+        project_entrypoint = mlt_dir / "scripts/entrypoint.sh"
         project_entrypoint.write_bytes(base_entrypoint.read_bytes())
         project_entrypoint.chmod(0o755)  # Make executable
 
@@ -151,7 +164,7 @@ def generate_project_files(
             base_ray_init = Path(
                 pkg_resources.resource_filename("mltoolbox", "base/scripts/ray-init.sh")
             )
-            project_ray_init = project_dir / "scripts/ray-init.sh"
+            project_ray_init = mlt_dir / "scripts/ray-init.sh"
             project_ray_init.write_bytes(base_ray_init.read_bytes())
             project_ray_init.chmod(0o755)  # Make executable
 
@@ -168,19 +181,13 @@ def generate_project_files(
         **env_vars,
     }
 
-    # Generate docker-compose.yml
+    # Generate docker-compose.yml in .mlt/
     docker_compose = render_template("docker-compose.yml.j2", **context)
-    (project_dir / "docker-compose.yml").write_text(docker_compose)
+    (mlt_dir / "docker-compose.yml").write_text(docker_compose)
 
-    # Generate Dockerfiles
+    # Generate Dockerfile in .mlt/
     dockerfile = render_template("Dockerfile.j2", **context)
-    (project_dir / "Dockerfile").write_text(dockerfile)
-
-    # Generate Zed editor LSP configuration
-    zed_dir = project_dir / ".zed"
-    zed_dir.mkdir(exist_ok=True)
-    zed_settings = render_template("zed-settings.json.j2", **context)
-    (zed_dir / "settings.json").write_text(zed_settings)
+    (mlt_dir / "Dockerfile").write_text(dockerfile)
 
     # Create template environment variables directly
     template_env = {
@@ -191,10 +198,10 @@ def generate_project_files(
         **env_vars,
     }
 
-    # Merge with existing .env if it exists
+    # Merge with existing .env if it exists (stays in project root for user access)
     merged_env = merge_env_files(project_dir, template_env)
 
-    # Write merged .env
+    # Write merged .env to project root
     env_file = project_dir / ".env"
     with open(env_file, "w") as f:
         for key, value in merged_env.items():

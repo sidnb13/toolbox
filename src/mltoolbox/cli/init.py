@@ -1,5 +1,6 @@
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -99,7 +100,16 @@ def init(
     logger = get_logger()
     logger.success(f"Project {project_name} (re)initialized!")
     logger.info(f"Using {variant} base image")
-    logger.section("Next steps")
-    logger.info("1. Edit pyproject.toml to add your project-specific dependencies")
-    logger.info("2. Run 'uv sync --locked' to install dependencies")
-    logger.info("3. Run 'mltoolbox container start' to begin development")
+
+    # Display next steps in compact tree format
+    now = datetime.now().strftime("%H:%M:%S")
+    logger.console.print(f"{now}  [bold blue]●[/bold blue]  [bold]Next steps[/bold]")
+    logger.console.print(
+        "      ├─ [dim]Edit pyproject.toml to add your project-specific dependencies[/dim]"
+    )
+    logger.console.print(
+        "      ├─ [dim]Run 'uv sync --locked' to install dependencies[/dim]"
+    )
+    logger.console.print(
+        "      └─ [dim]Run 'mltoolbox container start' to begin development[/dim]"
+    )

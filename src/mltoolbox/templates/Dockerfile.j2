@@ -1,3 +1,5 @@
+# Dockerfile for mltoolbox project
+# This file lives in .mlt/ - build context is project root (parent directory)
 ARG PYTHON_VERSION
 ARG GIT_NAME
 ARG GIT_EMAIL
@@ -27,12 +29,12 @@ ENV UV_TORCH_BACKEND=auto
 RUN git config --global user.email "${GIT_EMAIL}" && \
     git config --global user.name "${GIT_NAME}"
 
-# Copy only the scripts we need
-COPY scripts/ray-init.sh /usr/local/bin/ray-init.sh
-COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+# Copy scripts from .mlt/ (paths relative to build context which is project root)
+COPY .mlt/scripts/ray-init.sh /usr/local/bin/ray-init.sh
+COPY .mlt/scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/ray-init.sh /usr/local/bin/entrypoint.sh
 
-# Copy only dependency files
+# Copy dependency files from project root
 COPY pyproject.toml uv.lock* ./
 
 # Install everything to system Python, including LSP tools and mlt for watchdog

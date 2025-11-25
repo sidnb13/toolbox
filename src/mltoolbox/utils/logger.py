@@ -7,12 +7,17 @@ import re
 import sys
 import threading
 from contextlib import contextmanager
+from datetime import datetime
 
 import colorlog
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+)
 
 # ANSI escape sequence pattern - more comprehensive
 ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -145,6 +150,28 @@ class MLToolboxLogger:
             message = f"[DRY RUN] {message}"
         self.logger.info(message, **kwargs)
 
+    def hint(self, message: str):
+        """Display a helpful hint or tip."""
+        now = datetime.now().strftime("%H:%M:%S")
+        self.console.print(f"{now}  [yellow]💡[/yellow]  [dim]{message}[/dim]")
+
+    def summary(self, title: str, items: list[str]):
+        """Display a completion summary with items."""
+        now = datetime.now().strftime("%H:%M:%S")
+        self.console.print()  # Blank line for spacing
+        self.console.print(f"{now}  [bold green]✓[/bold green]  [bold]{title}[/bold]")
+        for idx, item in enumerate(items):
+            prefix = "      └─ " if idx == len(items) - 1 else "      ├─ "
+            self.console.print(f"{prefix}[dim]{item}[/dim]")
+        self.console.print()  # Blank line after summary
+
+    def empty_state(self, message: str, suggestion: str | None = None):
+        """Display an empty state message."""
+        now = datetime.now().strftime("%H:%M:%S")
+        self.console.print(f"{now}  [grey37]○[/grey37]  [dim]{message}[/dim]")
+        if suggestion:
+            self.console.print(f"      └─ [dim italic]{suggestion}[/dim italic]")
+
     def warning(self, message: str, **kwargs):
         """Log warning message."""
         if self.dryrun:
@@ -164,31 +191,33 @@ class MLToolboxLogger:
         self.logger.debug(message, **kwargs)
 
     def success(self, message: str):
-        """Log success message (no emoji, just green text)."""
+        """Log success message with subtle indicator."""
+        now = datetime.now().strftime("%H:%M:%S")
         if self.dryrun:
             message = f"[DRY RUN] {message}"
-        self.console.print(f"[green]{message}[/green]")
+        self.console.print(f"{now}  [green]✓[/green]  [dim]{message}[/dim]")
 
     def failure(self, message: str):
-        """Log failure message (no emoji, just red text)."""
+        """Log failure message with subtle indicator."""
+        now = datetime.now().strftime("%H:%M:%S")
         if self.dryrun:
             message = f"[DRY RUN] {message}"
-        self.console.print(f"[red]{message}[/red]")
+        self.console.print(f"{now}  [red]✗[/red]  [dim]{message}[/dim]")
 
     def step(self, message: str):
-        """Log a step in the process (no emoji, just blue text)."""
+        """Log a step in the process with subtle indicator."""
+        now = datetime.now().strftime("%H:%M:%S")
         if self.dryrun:
             message = f"[DRY RUN] {message}"
-        self.console.print(f"[blue]{message}[/blue]")
+        self.console.print(f"{now}  [blue]→[/blue]  [dim]{message}[/dim]")
 
     def section(self, title: str):
-        """Print a section header with timestamp and horizontal rule."""
-        from datetime import datetime
-
+        """Print a compact section header."""
         now = datetime.now().strftime("%H:%M:%S")
         prefix = "[DRY RUN] " if self.dryrun else ""
-        self.console.print(f"[bold blue]{now}  {prefix}{title}[/bold blue]")
-        self.console.print("[grey37]" + "─" * 60 + "[/grey37]")
+        self.console.print(
+            f"{now}  [bold blue]●[/bold blue]  [bold]{prefix}{title}[/bold]"
+        )
 
     @contextmanager
     def spinner(self, message: str):
@@ -196,14 +225,17 @@ class MLToolboxLogger:
         # Try to acquire the live lock, but don't block
         if self._live_lock.acquire(blocking=False):
             try:
-                # Use spinner if we can get the lock
+                # Use compact spinner
+                now = datetime.now().strftime("%H:%M:%S")
+                if self.dryrun:
+                    message = f"[DRY RUN] {message}"
                 with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
+                    SpinnerColumn(style="blue"),
+                    TextColumn(f"{now}  [blue]⟳[/blue]  [dim]{message}[/dim]"),
                     console=self.console,
                     transient=True,
                 ) as progress:
-                    task = progress.add_task(description=message, total=None)
+                    task = progress.add_task("", total=None)
                     try:
                         yield progress
                     finally:
@@ -216,6 +248,143 @@ class MLToolboxLogger:
             yield None
 
     @contextmanager
+    def command_output(
+        self,
+        command: str,
+        status: str = None,
+        exit_code: int = None,
+        duration: float = None,
+    ):
+        """Context manager for compact command output with tree-style formatting."""
+        import time as _time
+
+        _time.time()
+        content_lines = []
+        cmd_status = status
+        cmd_exit_code = exit_code
+        cmd_duration = duration
+        dryrun = self.dryrun
+
+        class CommandCapture:
+            def write(self, text):
+                if text.strip():
+                    clean_text = clean_terminal_output(text)
+                    if clean_text.strip():
+                        lines = [
+                            line.rstrip()
+                            for line in clean_text.split("\n")
+                            if line.strip()
+                        ]
+                        content_lines.extend(lines)
+
+            def flush(self):
+                pass
+
+        capture = CommandCapture()
+        try:
+            yield capture
+        finally:
+            _time.time()
+            # Determine status indicator
+            if cmd_status == "success":
+                indicator = "[green]●[/green]"
+            elif cmd_status == "failed":
+                indicator = "[red]●[/red]"
+            else:
+                indicator = "[grey37]●[/grey37]"
+
+            # Compose timestamp and indicator
+            now = datetime.now().strftime("%H:%M:%S")
+            timestamp_indicator = f"{now}  {indicator}"
+
+            # Truncate command if too long
+            display_cmd = command
+            max_cmd_length = 60
+            if len(display_cmd) > max_cmd_length:
+                display_cmd = display_cmd[: max_cmd_length - 3] + "..."
+
+            # Build metadata line
+            metadata_parts = []
+            if dryrun:
+                metadata_parts.append("[DRY RUN]")
+            if cmd_exit_code is not None:
+                metadata_parts.append(f"Exit code: {cmd_exit_code}")
+            if cmd_duration is not None:
+                metadata_parts.append(f"Duration: {cmd_duration:.2f}s")
+            metadata = "  ".join(metadata_parts)
+
+            # Print main line with command
+            self.console.print(f"{timestamp_indicator}  [dim]{display_cmd}[/dim]")
+
+            # Determine if we have both metadata and output
+            has_output = bool(content_lines)
+            has_metadata = bool(metadata)
+
+            # Print metadata and output with tree-style indentation
+            if has_metadata or has_output:
+                filtered_lines = []
+                if content_lines:
+                    prev_line = None
+                    for line in content_lines:
+                        if line != prev_line and line.strip():
+                            filtered_lines.append(line)
+                            prev_line = line
+
+                # Determine tree characters based on what follows
+                if has_metadata and has_output:
+                    # Metadata is not last, use ├─
+                    metadata_prefix = "      ├─ "
+                    # Output lines use │  except the last one
+                    output_prefix = "      │  "
+                    last_output_prefix = "      └─ "
+                elif has_metadata:
+                    # Only metadata, use └─
+                    metadata_prefix = "      └─ "
+                    output_prefix = None
+                    last_output_prefix = None
+                else:
+                    # Only output
+                    metadata_prefix = None
+                    output_prefix = "      │  "
+                    last_output_prefix = "      └─ "
+
+                # Print metadata
+                if has_metadata and metadata_prefix:
+                    self.console.print(f"{metadata_prefix}[dim]{metadata}[/dim]")
+
+                # Print output content with tree indentation
+                if filtered_lines:
+                    # Limit output to first few lines for compactness
+                    max_output_lines = 5
+                    output_lines = filtered_lines[:max_output_lines]
+                    total_lines = len(output_lines)
+
+                    for idx, line in enumerate(output_lines):
+                        # Truncate very long lines
+                        if len(line) > 80:
+                            line = line[:77] + "..."
+
+                        # Use appropriate prefix based on position
+                        if idx == total_lines - 1:
+                            # Last line uses └─
+                            prefix = (
+                                last_output_prefix
+                                if last_output_prefix
+                                else "      └─ "
+                            )
+                        else:
+                            # Middle lines use │
+                            prefix = output_prefix if output_prefix else "      │  "
+
+                        self.console.print(f"{prefix}[dim]{line}[/dim]")
+
+                    if len(filtered_lines) > max_output_lines:
+                        remaining = len(filtered_lines) - max_output_lines
+                        self.console.print(
+                            f"      └─ [dim]... ({remaining} more lines)[/dim]"
+                        )
+
+    @contextmanager
     def panel_output(
         self,
         title: str,
@@ -226,7 +395,6 @@ class MLToolboxLogger:
     ):
         """Context manager for bordered output panel with summary and clean look."""
         import time as _time
-        from datetime import datetime
 
         _time.time()
         content_lines = []
@@ -293,24 +461,19 @@ class MLToolboxLogger:
     def live_output(self, title: str):
         """Context manager for live updating output with pro CLI look."""
         import time as _time
-        from datetime import datetime
 
-        dryrun = self.dryrun
         if self._live_lock.acquire(blocking=False):
             try:
                 content_buffer = []
                 last_update_time = 0
                 _time.time()
+                # Use compact format for live updates
+                initial_display = f"{datetime.now().strftime('%H:%M:%S')}  [blue]⟳[/blue]  [dim]{title}[/dim]"
                 with Live(
-                    Panel(
-                        "Starting...",
-                        title=f"[bold]{title}[/bold]",
-                        border_style="grey37",
-                        padding=(0, 2),
-                        expand=True,
-                    ),
+                    initial_display,
                     console=self.console,
-                    refresh_per_second=5,  # 0.2s
+                    refresh_per_second=5,
+                    transient=True,
                 ) as live:
 
                     class LiveCapture:
@@ -323,54 +486,164 @@ class MLToolboxLogger:
                                     lines = clean_content.split("\n")
                                     for line in lines:
                                         line = line.strip()
-                                        if line and self._should_show_line(line):
-                                            content_buffer.append(line)
+                                        # Be less aggressive with filtering - show meaningful lines
+                                        if line and len(line.strip()) > 0:
+                                            # Only filter obvious noise, keep most content
+                                            if not self._is_noise_line(line):
+                                                content_buffer.append(line)
                                     if len(content_buffer) > 30:
                                         content_buffer = content_buffer[-30:]
                                     if current_time - last_update_time > 0.2:
                                         now = datetime.now().strftime("%H:%M:%S")
-                                        header = f"[bold]{now}  {'[DRY RUN] ' if dryrun else ''}{title}[/bold]"
-                                        display_text = (
-                                            "\n".join(content_buffer)
-                                            if content_buffer
-                                            else "Processing..."
+                                        # Show last few lines in compact format
+                                        recent_lines = (
+                                            content_buffer[-3:]
+                                            if len(content_buffer) > 3
+                                            else content_buffer
                                         )
-                                        live.update(
-                                            Panel(
-                                                f"{header}\n[white on black]{display_text}[/white on black]",
-                                                border_style="grey37",
-                                                padding=(0, 2),
-                                                expand=True,
+                                        if recent_lines:
+                                            display_lines = "\n".join(
+                                                [
+                                                    f"      │  [dim]{line[:80]}[/dim]"
+                                                    if len(line) <= 80
+                                                    else f"      │  [dim]{line[:77]}...[/dim]"
+                                                    for line in recent_lines
+                                                ]
                                             )
-                                        )
+                                            live.update(
+                                                f"{now}  [blue]⟳[/blue]  [dim]{title}[/dim]\n{display_lines}"
+                                            )
+                                        else:
+                                            live.update(
+                                                f"{now}  [blue]⟳[/blue]  [dim]{title}[/dim]  [dim]Processing...[/dim]"
+                                            )
                                         last_update_time = current_time
 
                         def flush(self):
                             pass
 
                     yield LiveCapture()
-                    # Final update with all content
-                    if content_buffer:
-                        now = datetime.now().strftime("%H:%M:%S")
-                        header = f"[bold]{now}  {'[DRY RUN] ' if dryrun else ''}{title} - Complete[/bold]"
-                        final_content = "\n".join(content_buffer)
-                        live.update(
-                            Panel(
-                                f"{header}\n[white on black]{final_content}[/white on black]",
-                                border_style="green",
-                                padding=(0, 2),
-                                expand=True,
+                    # Live display will auto-close when context exits
+                # After Live context exits, show compact final output
+                if content_buffer:
+                    # Extract command from title (e.g., "Remote Docker Command on 150.230.39.56" -> "docker command")
+                    # Try to extract a meaningful command name
+                    cmd_name = title.lower()
+                    if "docker" in cmd_name:
+                        cmd_name = "docker command"
+                    elif "command" in cmd_name:
+                        cmd_name = "remote command"
+                    else:
+                        cmd_name = title
+
+                    # Filter and clean content
+                    filtered_lines = []
+                    prev_line = None
+                    for line in content_buffer:
+                        if line != prev_line and line.strip():
+                            filtered_lines.append(line)
+                            prev_line = line
+
+                    # Use compact tree-style output
+                    now = datetime.now().strftime("%H:%M:%S")
+                    indicator = "[green]●[/green]"
+                    self.console.print(f"{now}  {indicator}  [dim]{cmd_name}[/dim]")
+
+                    if filtered_lines:
+                        max_output_lines = 5
+                        output_lines = filtered_lines[:max_output_lines]
+                        total_lines = len(output_lines)
+
+                        for idx, line in enumerate(output_lines):
+                            # Truncate very long lines
+                            if len(line) > 80:
+                                line = line[:77] + "..."
+
+                            # Use tree characters
+                            if idx == total_lines - 1:
+                                prefix = "      └─ "
+                            else:
+                                prefix = "      │  "
+
+                            self.console.print(f"{prefix}[dim]{line}[/dim]")
+
+                        if len(filtered_lines) > max_output_lines:
+                            remaining = len(filtered_lines) - max_output_lines
+                            self.console.print(
+                                f"      └─ [dim]... ({remaining} more lines)[/dim]"
                             )
-                        )
             finally:
                 self._live_lock.release()
         else:
-            with self.panel_output(title) as panel:
-                yield panel
+            # Fallback: use compact command_output format if live display unavailable
+            content_lines = []
 
-    def _should_show_line(self, line: str) -> bool:
-        """Determine if a line should be shown in live output."""
-        line_lower = line.lower()
+            class FallbackCapture:
+                def write(self, text):
+                    if text.strip():
+                        clean_text = clean_terminal_output(text)
+                        if clean_text.strip():
+                            lines = [
+                                line.rstrip()
+                                for line in clean_text.split("\n")
+                                if line.strip()
+                            ]
+                            content_lines.extend(lines)
+
+                def flush(self):
+                    pass
+
+            try:
+                yield FallbackCapture()
+            finally:
+                # Show compact output
+                cmd_name = title.lower()
+                if "docker" in cmd_name:
+                    cmd_name = "docker command"
+                elif "command" in cmd_name:
+                    cmd_name = "remote command"
+
+                now = datetime.now().strftime("%H:%M:%S")
+                indicator = "[green]●[/green]"
+                self.console.print(f"{now}  {indicator}  [dim]{cmd_name}[/dim]")
+
+                if content_lines:
+                    filtered_lines = []
+                    prev_line = None
+                    for line in content_lines:
+                        if line != prev_line and line.strip():
+                            filtered_lines.append(line)
+                            prev_line = line
+
+                    if filtered_lines:
+                        max_output_lines = 5
+                        output_lines = filtered_lines[:max_output_lines]
+                        total_lines = len(output_lines)
+
+                        for idx, line in enumerate(output_lines):
+                            if len(line) > 80:
+                                line = line[:77] + "..."
+
+                            if idx == total_lines - 1:
+                                prefix = "      └─ "
+                            else:
+                                prefix = "      │  "
+
+                            self.console.print(f"{prefix}[dim]{line}[/dim]")
+
+                        if len(filtered_lines) > max_output_lines:
+                            remaining = len(filtered_lines) - max_output_lines
+                            self.console.print(
+                                f"      └─ [dim]... ({remaining} more lines)[/dim]"
+                            )
+
+    def _is_noise_line(self, line: str) -> bool:
+        """Determine if a line is noise that should be filtered out."""
+        line_lower = line.lower().strip()
+
+        # Skip empty lines
+        if not line_lower:
+            return True
 
         # Skip Docker build noise
         docker_noise = [
@@ -403,50 +676,21 @@ class MLToolboxLogger:
 
         # Skip lines that are just Docker build progress
         if any(noise in line_lower for noise in docker_noise):
-            return False
+            return True
 
         # Skip lines that are just timing or progress indicators
         if re.match(r"^\s*\d+\.\d+s\s*$", line):
-            return False
+            return True
         if re.match(r"^\s*\[\d+/\d+\]\s*$", line):
-            return False
+            return True
         if re.match(r"^\s*#\d+\s*$", line):
-            return False
-
-        # Skip lines with just special characters or whitespace
-        if re.match(r"^[\s\[\]\(\)\-\+\=\>\<\|]*$", line):
-            return False
-
-        # Skip very short lines that are likely noise
-        if len(line.strip()) < 3:
-            return False
-
-        # Show lines that contain actual meaningful content
-        meaningful_indicators = [
-            "installing",
-            "downloading",
-            "building",
-            "compiling",
-            "error",
-            "warning",
-            "failed",
-            "success",
-            "creating",
-            "copying",
-            "updating",
-            "using cpython",
-            "creating virtual environment",
-            "updated https://",
-            "failed to download",
-        ]
-
-        if any(indicator in line_lower for indicator in meaningful_indicators):
             return True
 
-        # Show lines that look like actual command output or errors
-        if any(char in line for char in [":", "=", "/", "@"]):
+        # Skip lines with ONLY special characters or whitespace (but allow lines with content + special chars)
+        if re.match(r"^[\s\[\]\(\)\-\+\=\>\<\|\.]*$", line) and len(line.strip()) < 5:
             return True
 
+        # Most lines should be shown - only filter obvious noise
         return False
 
     def table(self, data: list, headers: list, title: str | None = None):
