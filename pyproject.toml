@@ -31,8 +31,6 @@ mltoolbox = [
     "watchdog>=3.0.0",  # For mlt sync-lsp daemon
 ]
 
-# AI Commit is now a separate package - removed from this monorepo
-
 # Instancebot specific dependencies
 instancebot = [
     # No additional dependencies beyond core (uses only stdlib + python-dotenv)

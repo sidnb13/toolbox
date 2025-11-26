@@ -124,12 +124,5 @@ else
     echo "⚠️  pre-commit not found, skipping pre-commit install"
 fi
 
-if command -v ai-commit &>/dev/null; then
-    echo "🔧 Running ai-commit install-hook..."
-    ai-commit install-hook || true
-else
-    echo "⚠️  ai-commit command not found, skipping AI commit hook installation"
-fi
-
 # Execute the command passed to docker run
 exec "$@"

@@ -847,16 +847,7 @@ def sync_project(
             bufsize=1,
         )
 
-        # Parse rsync progress output and display progress bar
-        from rich.progress import (
-            BarColumn,
-            FileSizeColumn,
-            Progress,
-            TextColumn,
-            TimeRemainingColumn,
-            TransferSpeedColumn,
-        )
-
+        # Parse rsync progress output and display minimal progress updates
         # Regex patterns for rsync --progress output
         # Actual format from stderr:
         # 1. "Transfer starting: N files"
@@ -873,6 +864,14 @@ def sync_project(
         # Match total bytes from stats (stdout)
         total_bytes_pattern = re.compile(r"total size is\s+(\d+(?:,\d+)*)")
 
+        def format_bytes(bytes_val):
+            """Format bytes to human-readable format."""
+            for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+                if bytes_val < 1024.0:
+                    return f"{bytes_val:.1f}{unit}"
+                bytes_val /= 1024.0
+            return f"{bytes_val:.1f}PB"
+
         total_bytes = None
         bytes_transferred = 0
         completed_files = {}  # Track completed files to avoid double counting
@@ -881,164 +880,140 @@ def sync_project(
         last_update_time = time.time()
         stderr_output = []  # Capture stderr for error reporting
         expecting_filename = False  # Track if we're expecting a filename line
+        file_count = 0
 
-        progress = Progress(
-            TextColumn("[bold blue]{task.description}", justify="right"),
-            BarColumn(bar_width=None),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            " ",
-            FileSizeColumn(),
-            " ",
-            TransferSpeedColumn(),
-            " ",
-            TimeRemainingColumn(),
-            console=logger.console,
-            transient=True,
-        )
+        # Read stdout for progress (rsync sends progress to stdout!)
+        # stderr is only for errors
+        import threading
 
-        with progress:
-            task = progress.add_task(
-                "[dim]Syncing files...[/dim]",
-                total=None,  # Unknown total initially
-            )
+        def read_stdout():
+            nonlocal \
+                bytes_transferred, \
+                total_bytes, \
+                current_file, \
+                current_file_size, \
+                completed_files, \
+                last_update_time, \
+                expecting_filename, \
+                file_count
+            for line in process.stdout:
+                if not line:
+                    continue
+                line_stripped = line.strip()
+                if not line_stripped:
+                    continue
 
-            # Read stdout for progress (rsync sends progress to stdout!)
-            # stderr is only for errors
-            import threading
+                # Parse "Transfer starting: N files"
+                match = transfer_starting_pattern.match(line_stripped)
+                if match:
+                    expecting_filename = True
+                    continue
 
-            def read_stdout():
-                nonlocal \
-                    bytes_transferred, \
-                    total_bytes, \
-                    current_file, \
-                    current_file_size, \
-                    completed_files, \
-                    last_update_time, \
+                # Parse filename (standalone line, no leading spaces, not stats)
+                if (
                     expecting_filename
-                for line in process.stdout:
-                    if not line:
-                        continue
-                    line_stripped = line.strip()
-                    if not line_stripped:
-                        continue
+                    and not line_stripped.startswith(" ")
+                    and not line_stripped.startswith("sent")
+                    and not line_stripped.startswith("total")
+                ):
+                    # This is a filename
+                    full_filename = line_stripped
+                    current_file = full_filename.split("/")[-1]
+                    if len(current_file) > 50:
+                        current_file = current_file[:47] + "..."
+                    expecting_filename = False
+                    # Initialize tracking for this file
+                    if full_filename not in completed_files:
+                        completed_files[full_filename] = 0
+                    continue
 
-                    # Parse "Transfer starting: N files"
-                    match = transfer_starting_pattern.match(line_stripped)
-                    if match:
-                        expecting_filename = True
-                        continue
+                # Parse progress line (starts with spaces, has numbers and %)
+                match = file_progress_pattern.match(line_stripped)
+                if match:
+                    (
+                        size_str,
+                        percent,
+                        speed_val,
+                        speed_unit,
+                        time_remaining,
+                    ) = match.groups()
 
-                    # Parse filename (standalone line, no leading spaces, not stats)
-                    if (
-                        expecting_filename
-                        and not line_stripped.startswith(" ")
-                        and not line_stripped.startswith("sent")
-                        and not line_stripped.startswith("total")
-                    ):
-                        # This is a filename
-                        full_filename = line_stripped
-                        current_file = full_filename.split("/")[-1]
-                        if len(current_file) > 50:
-                            current_file = current_file[:47] + "..."
-                        expecting_filename = False
-                        # Initialize tracking for this file
-                        if full_filename not in completed_files:
-                            completed_files[full_filename] = 0
-                        progress.update(
-                            task,
-                            description=f"[dim]{current_file}[/dim]",
-                        )
-                        continue
+                    # Convert size to bytes
+                    size_bytes = int(size_str.replace(",", ""))
+                    current_file_size = size_bytes
+                    percent_int = int(percent)
 
-                    # Parse progress line (starts with spaces, has numbers and %)
-                    match = file_progress_pattern.match(line_stripped)
-                    if match:
-                        (
-                            size_str,
-                            percent,
-                            speed_val,
-                            speed_unit,
-                            time_remaining,
-                        ) = match.groups()
+                    # Get current file being processed
+                    full_filename = current_file  # Use the last filename we saw
+                    if full_filename not in completed_files:
+                        completed_files[full_filename] = 0
 
-                        # Convert size to bytes
-                        size_bytes = int(size_str.replace(",", ""))
-                        current_file_size = size_bytes
-                        percent_int = int(percent)
+                    # Calculate bytes for this file based on percentage
+                    file_bytes_transferred = int((percent_int / 100) * size_bytes)
 
-                        # Get current file being processed
-                        full_filename = current_file  # Use the last filename we saw
-                        if full_filename not in completed_files:
-                            completed_files[full_filename] = 0
+                    # When file reaches 100%, mark it as completed
+                    if percent_int == 100:
+                        # File completed - add remaining bytes
+                        if completed_files[full_filename] < size_bytes:
+                            bytes_transferred += (
+                                size_bytes - completed_files[full_filename]
+                            )
+                            completed_files[full_filename] = size_bytes
+                            file_count += 1
+                    else:
+                        # File in progress - update bytes
+                        if completed_files[full_filename] < file_bytes_transferred:
+                            bytes_transferred += (
+                                file_bytes_transferred
+                                - completed_files[full_filename]
+                            )
+                            completed_files[full_filename] = file_bytes_transferred
 
-                        # Calculate bytes for this file based on percentage
-                        file_bytes_transferred = int((percent_int / 100) * size_bytes)
-
-                        # When file reaches 100%, mark it as completed
-                        if percent_int == 100:
-                            # File completed - add remaining bytes
-                            if completed_files[full_filename] < size_bytes:
-                                bytes_transferred += (
-                                    size_bytes - completed_files[full_filename]
-                                )
-                                completed_files[full_filename] = size_bytes
-                        else:
-                            # File in progress - update bytes
-                            if completed_files[full_filename] < file_bytes_transferred:
-                                bytes_transferred += (
-                                    file_bytes_transferred
-                                    - completed_files[full_filename]
-                                )
-                                completed_files[full_filename] = file_bytes_transferred
-
-                        # Update progress
+                    # Print minimal progress update every 1 second
+                    current_time = time.time()
+                    if current_time - last_update_time >= 1.0:
                         if total_bytes:
-                            progress.update(
-                                task,
-                                completed=min(bytes_transferred, total_bytes),
-                                total=total_bytes,
-                                description=f"[dim]{current_file} ({percent}%)[/dim]",
+                            percent_done = min(100, int((bytes_transferred / total_bytes) * 100))
+                            logger.console.print(
+                                f"      └─ [dim]{format_bytes(bytes_transferred)}/{format_bytes(total_bytes)} ({percent_done}%)[/dim]"
                             )
                         else:
-                            # Indeterminate progress - show current file and percentage
-                            progress.update(
-                                task,
-                                completed=bytes_transferred,
-                                description=f"[dim]{current_file} ({percent}%)[/dim]",
+                            logger.console.print(
+                                f"      └─ [dim]{format_bytes(bytes_transferred)} transferred[/dim]"
                             )
-                        continue
+                        last_update_time = current_time
+                    continue
 
-                    # Parse "total size is X" from stats (also in stdout)
-                    match = total_bytes_pattern.search(line_stripped)
-                    if match:
-                        total_bytes = int(match.group(1).replace(",", ""))
-                        progress.update(task, total=total_bytes)
-                        continue
+                # Parse "total size is X" from stats (also in stdout)
+                match = total_bytes_pattern.search(line_stripped)
+                if match:
+                    total_bytes = int(match.group(1).replace(",", ""))
+                    continue
 
-                    # Log other stdout lines as debug
-                    logger.debug(line_stripped)
+                # Log other stdout lines as debug
+                logger.debug(line_stripped)
 
-            def read_stderr():
-                # Capture stderr for error reporting only
-                nonlocal stderr_output
-                for line in process.stderr:
-                    stderr_output.append(line)
-                    if line.strip():
-                        logger.debug(f"rsync stderr: {line.strip()}")
+        def read_stderr():
+            # Capture stderr for error reporting only
+            nonlocal stderr_output
+            for line in process.stderr:
+                stderr_output.append(line)
+                if line.strip():
+                    logger.debug(f"rsync stderr: {line.strip()}")
 
-            # Start threads to read both streams
-            # stdout has progress, stderr has errors
-            stdout_thread = threading.Thread(target=read_stdout, daemon=True)
-            stderr_thread = threading.Thread(target=read_stderr, daemon=True)
-            stdout_thread.start()
-            stderr_thread.start()
+        # Start threads to read both streams
+        # stdout has progress, stderr has errors
+        stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+        stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
 
-            # Wait for process to complete
-            process.wait()
+        # Wait for process to complete
+        process.wait()
 
-            # Wait for threads to finish reading
-            stdout_thread.join(timeout=2)
-            stderr_thread.join(timeout=2)
+        # Wait for threads to finish reading
+        stdout_thread.join(timeout=2)
+        stderr_thread.join(timeout=2)
 
         if process.returncode == 0:
             logger.success("Sync completed successfully!")

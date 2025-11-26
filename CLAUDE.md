@@ -25,7 +25,7 @@
 
 **toolbox** is a monorepo of research utilities designed to streamline machine learning development workflows. It automates tedious DevOps tasks, allowing ML researchers to focus on experimentation rather than infrastructure management.
 
-### Three Core Tools
+### Two Core Tools
 
 1. **mltoolbox** - ML development environment management system
    - Remote development with SSH/Docker orchestration
@@ -39,13 +39,6 @@
    - Slack notifications for instance availability
    - Configurable filtering (type, region, GPU count)
    - Tracks instance appearance/disappearance with uptime
-
-3. **ai-commit** - AI-powered commit message generator
-   - Map-reduce diff summarization
-   - Conventional commits format (feat:, fix:, etc.)
-   - Breaking change detection
-   - Context from README and recent commits
-   - Pre-commit hook integration
 
 ### Target Users
 
@@ -67,12 +60,6 @@
 │       └── build_base.yml          # CI/CD for base Docker images
 │
 ├── src/
-│   ├── ai_commit/                  # AI commit message generator
-│   │   ├── cli.py                  # CLI entry point
-│   │   ├── llm_backend_async.py    # Async LLM interface
-│   │   ├── map_reduce_summarizer.py # Map-reduce algorithm
-│   │   └── pyproject.toml          # Separate package config
-│   │
 │   ├── instancebot/                # Lambda Labs GPU monitor
 │   │   ├── cli.py                  # CLI wrapper
 │   │   └── lambda_watchdog.py      # Core monitoring logic
@@ -108,7 +95,6 @@
 ├── pyproject.toml                  # Package metadata
 ├── uv.lock                         # Locked dependencies
 ├── .pre-commit-config.yaml         # Git hooks
-├── .pre-commit-hooks.yaml          # ai-commit hook definition
 └── .gitignore                      # Standard Python ignores
 ```
 
@@ -179,19 +165,6 @@ Key responsibilities:
 - Command exit code handling
 
 Location: `/home/user/toolbox/src/mltoolbox/utils/helpers.py`
-
-#### ai_commit.map_reduce_summarizer (288 lines)
-**Commit message generation with map-reduce**
-
-Key responsibilities:
-- Split git diffs by file for parallel processing
-- Async LLM calls for individual file summaries
-- Reduce phase: aggregate summaries into commit message
-- Conventional commits format enforcement
-- Breaking change detection (BREAKING CHANGE:)
-- Context gathering from README and recent commits
-
-Location: `/home/user/toolbox/src/ai_commit/map_reduce_summarizer.py`
 
 #### instancebot.lambda_watchdog (383 lines)
 **GPU instance monitoring**
@@ -343,14 +316,13 @@ pip install mlt-toolbox==0.1.0
 ### Branch Strategy
 
 - **Main branch**: Stable releases
-- **Feature branches**: Prefix with `claude/` for AI-assisted development
-- **Branch naming**: `claude/claude-md-<session-id>` (enforced by git hooks)
+- **Feature branches**: Use descriptive names
 
 ### Creating a New Feature
 
 1. **Create feature branch**
    ```bash
-   git checkout -b claude/feature-name-<session-id>
+   git checkout -b feature-name
    ```
 
 2. **Make changes** following code conventions
@@ -360,14 +332,14 @@ pip install mlt-toolbox==0.1.0
    pre-commit run --all-files
    ```
 
-4. **Commit with AI assistance**
-   - Pre-commit hook automatically generates commit message
-   - Review and edit if needed
-   - Follows conventional commits format
+4. **Commit changes**
+   ```bash
+   git commit -m "feat: description of changes"
+   ```
 
 5. **Push to remote**
    ```bash
-   git push -u origin claude/feature-name-<session-id>
+   git push -u origin feature-name
    ```
 
 ### Adding a New CLI Command
@@ -413,11 +385,10 @@ pip install mlt-toolbox==0.1.0
    mltoolbox my-command test-arg --flag
    ```
 
-#### For instancebot or ai-commit
+#### For instancebot
 
-Similar pattern, but modify respective CLI files:
+Similar pattern, but modify respective CLI file:
 - `/home/user/toolbox/src/instancebot/cli.py`
-- `/home/user/toolbox/src/ai_commit/cli.py`
 
 ### Adding a New Utility Function
 
@@ -1077,7 +1048,6 @@ context = {
 | Sync utils | `/home/user/toolbox/src/mltoolbox/utils/remote.py` | 975 | File synchronization |
 | Database | `/home/user/toolbox/src/mltoolbox/utils/db.py` | 350 | State persistence |
 | SSH helpers | `/home/user/toolbox/src/mltoolbox/utils/helpers.py` | 286 | Remote execution |
-| AI commit | `/home/user/toolbox/src/ai_commit/map_reduce_summarizer.py` | 288 | Commit messages |
 | Instancebot | `/home/user/toolbox/src/instancebot/lambda_watchdog.py` | 383 | GPU monitoring |
 
 ### Templates
@@ -1122,11 +1092,6 @@ context = {
    - Auto-formats code
    - Excludes: `.ipynb` files
 
-3. **ai-commit**
-   - Generates commit messages
-   - Word limit: 30 words
-   - Conventional commits format
-
 **Manual execution**:
 ```bash
 # Run all hooks
@@ -1134,7 +1099,6 @@ pre-commit run --all-files
 
 # Run specific hook
 pre-commit run ruff --all-files
-pre-commit run ai-commit --all-files
 
 # Update hooks
 pre-commit autoupdate
@@ -1219,11 +1183,11 @@ Before committing:
 
 **Main branch**: Protected, requires clean pre-commit hooks
 
-**Feature branches**: Must start with `claude/` and end with session ID for AI-assisted work
+**Feature branches**: Use descriptive names
 
 ### Commit Message Format
 
-**Conventional commits** enforced by ai-commit hook:
+**Conventional commits** format (recommended):
 
 ```
 <type>(<scope>): <subject>
@@ -1293,40 +1257,11 @@ platform:
 - `ghcr.io/sidbaskaran/ml-base:py3.11-gh200`
 - `ghcr.io/sidbaskaran/ml-base:py3.12-gh200`
 
-### Git Workflow for AI Assistants
-
-```bash
-# 1. Ensure on correct branch
-git status
-git branch  # Should be on claude/claude-md-<session-id>
-
-# 2. Stage changes
-git add <files>
-
-# 3. Commit (ai-commit hook auto-generates message)
-git commit
-
-# 4. Review and edit commit message if needed
-# ai-commit provides a draft, you can modify before finalizing
-
-# 5. Push with retry logic
-git push -u origin <branch-name>
-
-# If push fails with 403, verify branch name starts with 'claude/'
-# and ends with matching session ID
-
-# 6. Retry on network errors (exponential backoff)
-# Wait 2s, retry
-# Wait 4s, retry
-# Wait 8s, retry
-# Wait 16s, retry
-```
-
 ### Pull Request Process
 
 1. **Push feature branch**:
    ```bash
-   git push -u origin claude/feature-name-<session-id>
+   git push -u origin feature-name
    ```
 
 2. **Create PR** (via GitHub web interface or CLI):
@@ -1591,42 +1526,7 @@ ruff....................................................................Failed
    pre-commit install
    ```
 
-#### Issue 8: ai-commit not generating messages
-
-**Symptom**:
-```
-Error: Failed to generate commit message
-```
-
-**Solutions**:
-1. Check API keys:
-   ```bash
-   echo $OPENAI_API_KEY
-   echo $TOGETHER_API_KEY
-   ```
-
-2. Set API key:
-   ```bash
-   export OPENAI_API_KEY="sk-..."
-   ```
-
-3. Test manually:
-   ```bash
-   ai-commit --dry-run
-   ```
-
-4. Check model availability:
-   ```bash
-   # In ai_commit config
-   AI_COMMIT_MODEL="gpt-4-turbo"
-   ```
-
-5. Bypass if needed:
-   ```bash
-   git commit -m "manual message" --no-verify
-   ```
-
-#### Issue 9: Template rendering errors
+#### Issue 8: Template rendering errors
 
 **Symptom**:
 ```
@@ -1655,7 +1555,7 @@ Error: Template variable 'project_name' undefined
    cat src/mltoolbox/templates/Dockerfile.j2
    ```
 
-#### Issue 10: Database corruption
+#### Issue 9: Database corruption
 
 **Symptom**:
 ```
@@ -1883,13 +1783,6 @@ HOST_RAY_CLIENT_PORT=8265
 # SSH
 SSH_KEY_NAME=id_rsa
 
-# AI Commit
-OPENAI_API_KEY=sk-xxxxx
-TOGETHER_API_KEY=xxxxx
-AI_COMMIT_MSG_WORD_LIMIT=30
-AI_COMMIT_MODEL=gpt-4-turbo
-AI_COMMIT_EXTRA_CONTEXT="This is a research codebase"
-
 # Instance Bot
 LAMBDA_LABS_API_KEY=xxxxx
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxxxx
@@ -1916,10 +1809,6 @@ mltoolbox remote remove myserver
 instancebot --api-key $API_KEY --slack-webhook $WEBHOOK \
             --type gpu_1x_a100_sxm4 --region us-west-2
 
-# AI Commit
-ai-commit install-hook
-ai-commit --dry-run
-
 # Docker
 docker build -f src/mltoolbox/base/Dockerfile.cuda -t test .
 docker run --rm --gpus all test nvidia-smi
@@ -1935,7 +1824,7 @@ SELECT * FROM remote_project;
 # Git
 git status
 git add .
-git commit  # ai-commit hook runs
+git commit -m "feat: description of changes"
 git push -u origin branch-name
 ```
 
