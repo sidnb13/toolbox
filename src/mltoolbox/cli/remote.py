@@ -963,8 +963,11 @@ def attach(host_or_alias, port, container_name, branch_name):
             branch_name = None
 
     # Append branch name to container name (same logic as connect command)
+    # But only if it's not already included in the container name
     if branch_name:
-        container_name = f"{container_name}-{branch_name}"
+        branch_suffix = f"-{branch_name}"
+        if not container_name.endswith(branch_suffix):
+            container_name = f"{container_name}-{branch_name}"
 
     # Check if container exists and is running
     check_cmd = [
