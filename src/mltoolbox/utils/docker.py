@@ -426,6 +426,85 @@ def find_available_port(remote_config: RemoteConfig | None, start_port: int) -> 
     return port
 
 
+def wait_for_container_ssh(
+    remote_config: RemoteConfig, ssh_port: int = 2222, timeout: int = 30
+) -> bool:
+    """
+    Wait for SSH server to be ready inside container.
+
+    Args:
+        remote_config: Remote configuration for SSH connection
+        ssh_port: SSH port to check (default: 2222)
+        timeout: Maximum seconds to wait (default: 30)
+
+    Returns:
+        bool: True if SSH is ready, False on timeout
+    """
+    import time
+
+    logger = get_logger()
+    logger.step(f"Waiting for container SSH on port {ssh_port}...")
+
+    start_time = time.time()
+
+    while time.time() - start_time < timeout:
+        try:
+            # Check if SSH port is listening on the host (host networking)
+            check_cmd = f"nc -z localhost {ssh_port} 2>/dev/null && echo 'ready' || echo 'not_ready'"
+            result = remote_cmd(remote_config, [check_cmd])
+
+            if "ready" in result.stdout:
+                logger.success(f"Container SSH ready on port {ssh_port}")
+                return True
+        except Exception:
+            pass  # Continue waiting
+
+        time.sleep(2)
+
+    logger.warning(f"Container SSH not ready after {timeout}s timeout")
+    return False
+
+
+def wait_for_jupyter(
+    remote_config: RemoteConfig, jupyter_port: int = 8888, timeout: int = 30
+) -> bool:
+    """
+    Wait for Jupyter server to be ready inside container.
+
+    Args:
+        remote_config: Remote configuration for SSH connection
+        jupyter_port: Jupyter port to check (default: 8888)
+        timeout: Maximum seconds to wait (default: 30)
+
+    Returns:
+        bool: True if Jupyter is ready, False on timeout
+    """
+    import time
+
+    logger = get_logger()
+    logger.step(f"Waiting for Jupyter server on port {jupyter_port}...")
+
+    start_time = time.time()
+
+    while time.time() - start_time < timeout:
+        try:
+            # Check if Jupyter is responding (host networking)
+            check_cmd = f"curl -s -o /dev/null -w '%{{http_code}}' http://localhost:{jupyter_port} 2>/dev/null || echo '000'"
+            result = remote_cmd(remote_config, [check_cmd])
+
+            # Jupyter returns 200 or 302 when ready
+            if "200" in result.stdout or "302" in result.stdout:
+                logger.success(f"Jupyter server ready on port {jupyter_port}")
+                return True
+        except Exception:
+            pass  # Continue waiting
+
+        time.sleep(2)
+
+    logger.warning(f"Jupyter not ready after {timeout}s timeout")
+    return False
+
+
 def get_image_digest(
     image: str,
     remote: bool = False,

@@ -25,14 +25,17 @@ services:
       - ~/.claude:/root/.claude
       - /var/run/docker.sock:/var/run/docker.sock
       - /tmp/ray_lockfiles:/root/ray_lockfiles
-      # Mount LSP view directory (hardlinked from real site-packages, avoids install conflicts)
-      - ~/.cache/python-packages/${CONTAINER_NAME}:/opt/lsp-packages
       - type: bind
         source: ~/.ssh
         target: /root/.ssh
     environment:
       - CONTAINER_ID=${CONTAINER_NAME}
       - RAY_HEAD_ADDRESS=localhost:6379
+      # Container SSH and Jupyter configuration
+      - ENABLE_CONTAINER_SSH=${ENABLE_CONTAINER_SSH:-false}
+      - CONTAINER_SSH_PORT=${CONTAINER_SSH_PORT:-2222}
+      - ENABLE_JUPYTER=${ENABLE_JUPYTER:-false}
+      - JUPYTER_PORT=${JUPYTER_PORT:-8888}
       # No need for port mapping with host networking
     deploy:
       resources:

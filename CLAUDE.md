@@ -25,20 +25,14 @@
 
 **toolbox** is a monorepo of research utilities designed to streamline machine learning development workflows. It automates tedious DevOps tasks, allowing ML researchers to focus on experimentation rather than infrastructure management.
 
-### Two Core Tools
+### mltoolbox
 
-1. **mltoolbox** - ML development environment management system
-   - Remote development with SSH/Docker orchestration
-   - GPU setup and NVIDIA Container Toolkit management
-   - Project synchronization with intelligent file filtering
-   - Ray distributed computing integration
-   - Multi-architecture support (x86_64 CUDA, ARM64 GH200)
-
-2. **instancebot** - GPU instance availability monitor
-   - Polls Lambda Labs API for available GPU instances
-   - Slack notifications for instance availability
-   - Configurable filtering (type, region, GPU count)
-   - Tracks instance appearance/disappearance with uptime
+**mltoolbox** is an ML development environment management system:
+- Remote development with SSH/Docker orchestration
+- GPU setup and NVIDIA Container Toolkit management
+- Project synchronization with intelligent file filtering
+- Ray distributed computing integration
+- Multi-architecture support (x86_64 CUDA, ARM64 GH200)
 
 ### Target Users
 
@@ -60,10 +54,6 @@
 │       └── build_base.yml          # CI/CD for base Docker images
 │
 ├── src/
-│   ├── instancebot/                # Lambda Labs GPU monitor
-│   │   ├── cli.py                  # CLI wrapper
-│   │   └── lambda_watchdog.py      # Core monitoring logic
-│   │
 │   └── mltoolbox/                  # Main ML toolbox
 │       ├── base/                   # Base Docker images
 │       │   ├── Dockerfile.cuda     # x86_64 CUDA image
@@ -166,19 +156,6 @@ Key responsibilities:
 
 Location: `/home/user/toolbox/src/mltoolbox/utils/helpers.py`
 
-#### instancebot.lambda_watchdog (383 lines)
-**GPU instance monitoring**
-
-Key responsibilities:
-- Poll Lambda Labs API for instance availability
-- Filter by instance type, region, GPU count range
-- Slack webhook notifications with rich formatting
-- Track instance appearance/disappearance
-- Calculate instance uptime
-- Configurable polling interval
-
-Location: `/home/user/toolbox/src/instancebot/lambda_watchdog.py`
-
 ---
 
 ## Development Workflows
@@ -199,118 +176,6 @@ pip install -e ".[all,dev]"
 
 # Install pre-commit hooks
 pre-commit install
-```
-
-### Zed Editor Integration for Remote Development
-
-When developing on remote hosts with Docker containers, Zed editor needs access to Python packages for LSP features (autocomplete, linting, type checking). Since packages are installed inside the container for proper CUDA/PyTorch support, mltoolbox uses the `mlt` tool to provide transparent LSP proxying with automatic path translation.
-
-#### How It Works
-
-1. **LSP Tools in Container**: `ruff` and `basedpyright` are installed inside the Docker container with your project dependencies
-
-2. **mlt Tool**: A lightweight CLI tool (`mlt-toolbox` package) installed on the remote host provides:
-   - Smart LSP wrapper (`mlt lsp-auto`) - auto-detects local vs remote context
-   - LSP proxy functionality (`mlt lsp-proxy`) - direct container proxy
-   - Automatic path translation between host and container
-   - Container auto-detection
-   - Helper commands (`mlt attach`, `mlt status`, `mlt sync-lsp`)
-
-3. **Path Translation**: `mlt` automatically reads `docker-compose.yml` to understand path mappings and translates file paths in LSP messages bidirectionally
-
-4. **Zed Configuration**: The `.zed/settings.json` file points directly to `mlt` commands
-
-#### Automatic Setup
-
-Everything is configured automatically when you run `mltoolbox remote connect`:
-
-1. **mlt installation**: `pip install mlt-toolbox` on the remote host
-2. **`.zed/settings.json`**: Created in your project root with `mlt` LSP configuration
-3. **Path mappings**: Automatically detected from `docker-compose.yml`
-
-#### Zed Settings Reference
-
-Your `.zed/settings.json` contains (works both locally and remotely):
-
-```json
-{
-  "lsp": {
-    "ruff": {
-      "binary": {
-        "path": "mlt",
-        "arguments": ["lsp-auto", "ruff", "server"]
-      }
-    },
-    "basedpyright": {
-      "binary": {
-        "path": "mlt",
-        "arguments": ["lsp-auto", "basedpyright-langserver", "--stdio"]
-      }
-    }
-  }
-}
-```
-
-**Note**: `lsp-auto` automatically detects context:
-- Local (no docker-compose.yml): Direct passthrough to local LSP tools
-- Remote (has docker-compose.yml): Uses `lsp-proxy` with path translation
-
-#### Manual Testing
-
-```bash
-# On remote host, check mlt is installed
-which mlt
-
-# Test container detection
-mlt container
-
-# Check project status
-mlt status
-
-# Test LSP commands
-mlt lsp-auto ruff --version    # Auto-detects context
-mlt lsp-proxy ruff server      # Direct proxy (manual testing)
-
-# Attach to container
-mlt attach
-```
-
-#### Benefits
-
-- **Full package access**: LSP sees all packages installed in container
-- **Proper CUDA environment**: PyTorch/CUDA packages work correctly
-- **Automatic path translation**: Host paths ↔ container paths handled transparently
-- **No duplicate installations**: Single source of truth in container
-- **Clean architecture**: No wrapper scripts, just one `mlt` binary
-- **Auto-detection**: Finds container based on project name or CONTAINER_NAME env var
-
-#### Troubleshooting
-
-**LSP not working:**
-1. Check `mlt` is installed: `which mlt`
-2. Check container is running: `mlt status` or `docker ps`
-3. Test container detection: `mlt container`
-4. Check Zed settings: `cat .zed/settings.json`
-5. Verify LSP tools in container: `docker exec <container> which ruff basedpyright-langserver`
-6. Restart Zed or reload window
-
-**Path translation issues:**
-- `mlt` reads path mappings from `docker-compose.yml`
-- Verify your `docker-compose.yml` has the project volume mount
-- Check with: `docker inspect <container> | grep Mounts -A 20`
-
-**Container not found:**
-- `mlt` tries: CONTAINER_NAME env var → .env file → docker ps auto-detect
-- Set explicitly: `export CONTAINER_NAME=myproject-main`
-- Or ensure container name matches project directory name
-
-**mlt not installed:**
-```bash
-# On remote host
-pip install mlt-toolbox
-
-# Or with specific version
-pip install mlt-toolbox==0.1.0
 ```
 
 ### Branch Strategy
@@ -384,11 +249,6 @@ pip install mlt-toolbox==0.1.0
    mltoolbox my-command --help
    mltoolbox my-command test-arg --flag
    ```
-
-#### For instancebot
-
-Similar pattern, but modify respective CLI file:
-- `/home/user/toolbox/src/instancebot/cli.py`
 
 ### Adding a New Utility Function
 
@@ -1048,7 +908,6 @@ context = {
 | Sync utils | `/home/user/toolbox/src/mltoolbox/utils/remote.py` | 975 | File synchronization |
 | Database | `/home/user/toolbox/src/mltoolbox/utils/db.py` | 350 | State persistence |
 | SSH helpers | `/home/user/toolbox/src/mltoolbox/utils/helpers.py` | 286 | Remote execution |
-| Instancebot | `/home/user/toolbox/src/instancebot/lambda_watchdog.py` | 383 | GPU monitoring |
 
 ### Templates
 
@@ -1782,10 +1641,6 @@ HOST_RAY_CLIENT_PORT=8265
 
 # SSH
 SSH_KEY_NAME=id_rsa
-
-# Instance Bot
-LAMBDA_LABS_API_KEY=xxxxx
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxxxx
 ```
 
 ### Useful Commands Reference
@@ -1804,10 +1659,6 @@ mltoolbox remote datasync up myserver --local-dir ./data
 mltoolbox remote attach myserver
 mltoolbox remote list-remotes
 mltoolbox remote remove myserver
-
-# Instance Bot
-instancebot --api-key $API_KEY --slack-webhook $WEBHOOK \
-            --type gpu_1x_a100_sxm4 --region us-west-2
 
 # Docker
 docker build -f src/mltoolbox/base/Dockerfile.cuda -t test .

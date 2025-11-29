@@ -1,29 +1,6 @@
 #!/bin/bash
 set -e # Exit on error
 
-# Start LSP sync watchdog daemon (monitors site-packages and auto-syncs to LSP view)
-if command -v mlt &>/dev/null; then
-    echo "👀 Starting LSP sync watchdog daemon..."
-    # Run in background, redirect output to log file
-    nohup mlt sync-lsp --daemon >/tmp/mlt-sync-lsp.log 2>&1 &
-    echo "✅ Watchdog running (PID: $!) - logs at /tmp/mlt-sync-lsp.log"
-else
-    echo "⚠️  mlt command not found, skipping LSP sync watchdog"
-    echo "   (Install with: pip install mlt-toolbox)"
-
-    # Fallback: one-time sync
-    PYTHON_SHORT=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-    SITE_PACKAGES="/usr/local/lib/python${PYTHON_SHORT}/dist-packages"
-    LSP_PACKAGES="/opt/lsp-packages"
-
-    if [ -d "$SITE_PACKAGES" ] && [ -d "$LSP_PACKAGES" ]; then
-        echo "🔗 Doing one-time package sync (hardlinks)..."
-        cp -alu "$SITE_PACKAGES"/. "$LSP_PACKAGES"/ 2>/dev/null || true
-        PACKAGE_COUNT=$(find "$LSP_PACKAGES" -mindepth 1 -maxdepth 1 ! -name '__pycache__' -type d | wc -l)
-        echo "✅ LSP view ready with ${PACKAGE_COUNT} packages"
-    fi
-fi
-
 # Start a new SSH agent
 eval $(ssh-agent -s)
 
@@ -106,6 +83,84 @@ if [ ! -z "${RAY_HEAD_ADDRESS}" ]; then
     else
         echo "⚠️ Ray initialization script not found, skipping Ray registration"
     fi
+fi
+
+# Container SSH Server Setup
+if [ "${ENABLE_CONTAINER_SSH}" = "true" ]; then
+    echo "🔐 Setting up container SSH server..."
+
+    # Install openssh-server if not present
+    if ! command -v sshd &>/dev/null; then
+        echo "📦 Installing openssh-server..."
+        apt-get update -qq && apt-get install -y -qq openssh-server && rm -rf /var/lib/apt/lists/*
+    fi
+
+    # Create required directories
+    mkdir -p /var/run/sshd /etc/ssh/sshd_config.d
+
+    # Configure SSH: key-only auth on custom port
+    cat > /etc/ssh/sshd_config.d/container.conf <<EOF
+Port ${CONTAINER_SSH_PORT:-2222}
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+PubkeyAuthentication yes
+AuthorizedKeysFile /root/.ssh/authorized_keys
+EOF
+
+    # Create authorized_keys from mounted .pub files if it doesn't exist
+    if [ ! -f "/root/.ssh/authorized_keys" ] && [ -d "/root/.ssh" ]; then
+        echo "📝 Creating authorized_keys from available public keys..."
+        find /root/.ssh -name "*.pub" -exec cat {} \; > /root/.ssh/authorized_keys 2>/dev/null || true
+    fi
+
+    # Fix SSH permissions (SSH is strict about this)
+    if [ -d "/root/.ssh" ]; then
+        chmod 700 /root/.ssh
+        if [ -f "/root/.ssh/authorized_keys" ]; then
+            chmod 600 /root/.ssh/authorized_keys
+            KEY_COUNT=$(wc -l < /root/.ssh/authorized_keys 2>/dev/null || echo "0")
+            echo "✅ authorized_keys configured with ${KEY_COUNT} key(s)"
+        else
+            echo "⚠️  No authorized_keys file created. SSH access may not work."
+        fi
+    fi
+
+    # Start SSH daemon in background
+    echo "🚀 Starting SSH server on port ${CONTAINER_SSH_PORT:-2222}..."
+    /usr/sbin/sshd -D &
+    SSHD_PID=$!
+    echo "✅ SSH server started (PID: $SSHD_PID)"
+fi
+
+# Jupyter Server Setup
+if [ "${ENABLE_JUPYTER}" = "true" ]; then
+    echo "📓 Setting up Jupyter server..."
+
+    # Install jupyter if not present
+    if ! command -v jupyter &>/dev/null; then
+        echo "📦 Installing Jupyter notebook..."
+        pip install -q jupyter notebook ipykernel
+    fi
+
+    # Start Jupyter with Colab-compatible settings
+    echo "🚀 Starting Jupyter server on port ${JUPYTER_PORT:-8888}..."
+    nohup jupyter notebook \
+        --allow-root \
+        --ip=0.0.0.0 \
+        --port="${JUPYTER_PORT:-8888}" \
+        --no-browser \
+        --NotebookApp.allow_origin='https://colab.research.google.com' \
+        --NotebookApp.port_retries=0 \
+        --NotebookApp.allow_credentials=True \
+        --NotebookApp.token='' \
+        --notebook-dir="/workspace/${PROJECT_NAME}" \
+        > /tmp/jupyter.log 2>&1 &
+
+    JUPYTER_PID=$!
+    echo "✅ Jupyter server started (PID: $JUPYTER_PID)"
+    echo "   Logs: /tmp/jupyter.log"
+    echo "   URL: http://localhost:${JUPYTER_PORT:-8888}"
+    echo "   For Colab: Connect -> Connect to local runtime -> enter URL"
 fi
 
 # Run /usr/local/bin/install.sh with VARIANT if it exists

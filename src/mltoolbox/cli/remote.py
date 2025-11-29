@@ -107,6 +107,28 @@ def remote():
 @click.option(
     "--port", "-P", default=None, type=int, help="SSH port to use (default 22)"
 )
+@click.option(
+    "--container-ssh",
+    is_flag=True,
+    help="Enable SSH server inside container for direct SSH access (port 2222)",
+)
+@click.option(
+    "--container-ssh-port",
+    default=2222,
+    type=int,
+    help="Port for container SSH server (default: 2222)",
+)
+@click.option(
+    "--jupyter",
+    is_flag=True,
+    help="Start Jupyter server in container (port 8888, Colab-compatible)",
+)
+@click.option(
+    "--jupyter-port",
+    default=8888,
+    type=int,
+    help="Port for Jupyter server (default: 8888)",
+)
 @click.pass_context
 def connect(
     ctx,
@@ -127,6 +149,10 @@ def connect(
     dependency_tags,
     identity_file,
     port,
+    container_ssh,
+    container_ssh_port,
+    jupyter,
+    jupyter_port,
 ):
     """Connect to remote development environment."""
     dryrun = ctx.obj.get("dryrun", False)
@@ -244,14 +270,15 @@ def connect(
     # Read existing config and filter out previous entries for this host/alias
     existing_config = []
     skip_block = False
+    container_alias = f"{remote.alias}-container"
 
     if ssh_config_path.exists():
         with ssh_config_path.open("r") as f:
             for line in f:
                 if line.startswith("Host "):
                     current_host = line.split()[1].strip()
-                    # Skip this block if it matches our alias
-                    skip_block = current_host == remote.alias
+                    # Skip this block if it matches our alias or container alias
+                    skip_block = current_host in (remote.alias, container_alias)
                 if not skip_block:
                     existing_config.append(line)
 
@@ -264,7 +291,7 @@ def connect(
         if existing_config and not existing_config[-1].endswith("\n"):
             f.write("\n")
 
-        # Write the new/updated entry
+        # Write the new/updated entry for host
         f.write(f"Host {remote.alias}\n")
         f.write(f"    HostName {remote.host}\n")
         f.write(f"    User {remote.username}\n")
@@ -273,12 +300,31 @@ def connect(
             f.write(f"    IdentityFile {remote.identity_file}\n")
         f.write("\n")
 
+        # Write container SSH config entry if enabled
+        if container_ssh:
+            f.write(f"# Container SSH access for {remote.alias}\n")
+            f.write(f"Host {container_alias}\n")
+            f.write(f"    HostName {remote.host}\n")
+            f.write("    User root\n")
+            f.write(f"    Port {container_ssh_port}\n")
+            f.write("    ForwardAgent yes\n")
+            if remote.identity_file:
+                f.write(f"    IdentityFile {remote.identity_file}\n")
+            f.write("\n")
+
     from mltoolbox.utils.logger import get_logger
 
     logger = get_logger()
 
     logger.console.print()  # Spacing
     logger.hint(f"Access your instance anytime with: [cyan]ssh {remote.alias}[/cyan]")
+
+    # Show container SSH hint if enabled
+    if container_ssh:
+        logger.hint(
+            f"Direct container SSH: [cyan]ssh {container_alias}[/cyan] "
+            f"(or [cyan]ssh root@{remote.host} -p {container_ssh_port}[/cyan])"
+        )
 
     if not dryrun:
         setup_zshrc(remote_config)
@@ -349,6 +395,18 @@ def connect(
         "DEPENDENCY_TAGS": dependency_tags,
     }
 
+    # Add container SSH configuration
+    if container_ssh:
+        env_updates["ENABLE_CONTAINER_SSH"] = "true"
+        env_updates["CONTAINER_SSH_PORT"] = str(container_ssh_port)
+        logger.info(f"Container SSH enabled on port {container_ssh_port}")
+
+    # Add Jupyter configuration
+    if jupyter:
+        env_updates["ENABLE_JUPYTER"] = "true"
+        env_updates["JUPYTER_PORT"] = str(jupyter_port)
+        logger.info(f"Jupyter server enabled on port {jupyter_port}")
+
     # Get current branch if not specified
     if branch_name:
         container_name = f"{container_name}-{branch_name}"
@@ -405,13 +463,19 @@ def connect(
         remote_config, str(python_version_raw)
     )  # Use full/raw version for Ray
 
-    # Store only the Ray dashboard port
+    # Store port mappings including new services
+    port_mappings_dict = {"ray_dashboard": host_ray_dashboard_port}
+    if container_ssh:
+        port_mappings_dict["container_ssh"] = container_ssh_port
+    if jupyter:
+        port_mappings_dict["jupyter"] = jupyter_port
+
     db.upsert_remote(
         username=username,
         host=remote.host,
         project_name=project_name,
         container_name=container_name,
-        port_mappings={"ray_dashboard": host_ray_dashboard_port},
+        port_mappings=port_mappings_dict,
     )
 
     logger.console.print()  # Spacing before container start
@@ -428,19 +492,6 @@ def connect(
         python_version=python_version_major_minor,  # Use major.minor for main container
         variant=variant or "cuda",
     )
-
-    # Install mlt tool on the remote host for LSP proxying
-    logger.step("Installing mlt tool for LSP support")
-    # Get git repo URL from environment or use default
-    git_repo = os.getenv("TOOLBOX_REPO", "https://github.com/sidnb13/toolbox.git")
-    install_mlt_cmd = f"pip install 'git+{git_repo}#subdirectory=src/mlt' || echo 'Warning: mlt installation failed'"
-    mlt_install_config = RemoteConfig(
-        host=remote.host,
-        username=remote.username,
-        identity_file=str(remote.identity_file),
-        port=port,
-    )
-    remote_cmd(mlt_install_config, [install_mlt_cmd])
 
     cmd = f"cd ~/projects/{project_name} && docker exec -it -w /workspace/{project_name} {container_name} zsh"
 
@@ -476,6 +527,22 @@ def connect(
     logger.console.print(
         f"      ├─ [dim]Ray Dashboard:[/dim] [cyan]http://localhost:{host_ray_dashboard_port}[/cyan]"
     )
+
+    # Add Jupyter port forwarding if enabled
+    if jupyter:
+        ssh_args.extend(["-L", f"{jupyter_port}:localhost:{jupyter_port}"])
+        logger.console.print(
+            f"      ├─ [dim]Jupyter:[/dim] [cyan]http://localhost:{jupyter_port}[/cyan]"
+        )
+        logger.console.print(
+            "      │  [dim]Colab:[/dim] Connect → Connect to local runtime → enter URL"
+        )
+
+    # Add container SSH info if enabled (no port forwarding needed - direct access)
+    if container_ssh:
+        logger.console.print(
+            f"      ├─ [dim]Container SSH:[/dim] [cyan]ssh {container_alias}[/cyan] (port {container_ssh_port})"
+        )
 
     # Add additional user-specified port forwarding
     port_mappings_list = []

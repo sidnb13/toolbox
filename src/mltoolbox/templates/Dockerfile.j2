@@ -37,14 +37,10 @@ RUN chmod +x /usr/local/bin/ray-init.sh /usr/local/bin/entrypoint.sh
 # Copy dependency files from project root
 COPY pyproject.toml uv.lock* ./
 
-# Install everything to system Python, including LSP tools and mlt for watchdog
+# Install project dependencies to system Python
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system -e ".[${DEPENDENCY_TAGS}]" && \
-    uv pip install --system ipdb ruff basedpyright && \
-    uv pip install --system "mlt-toolbox @ git+https://github.com/sidnb13/toolbox.git#subdirectory=src/mlt"
-
-# Create LSP view directory (will be mounted and hardlinked from real site-packages)
-RUN mkdir -p /opt/lsp-packages
+    uv pip install --system ipdb
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["zsh"]

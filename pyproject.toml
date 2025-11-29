@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# MLToolbox specific dependencies (includes mlt)
+# MLToolbox specific dependencies
 mltoolbox = [
     "jinja2>=3.1.0",
     "tomli>=2.0.0",
@@ -28,18 +28,11 @@ mltoolbox = [
     "colorlog>=6.7.0",
     "rich>=13.0.0",
     "sqlalchemy>=2.0.0",
-    "watchdog>=3.0.0",  # For mlt sync-lsp daemon
-]
-
-# Instancebot specific dependencies
-instancebot = [
-    # No additional dependencies beyond core (uses only stdlib + python-dotenv)
 ]
 
 # Install all packages
 all = [
     "toolbox[mltoolbox]",
-    "toolbox[instancebot]",
 ]
 
 # Development dependencies
@@ -53,8 +46,6 @@ Repository = "https://github.com/sidbaskaran/toolbox.git"
 
 [project.scripts]
 mltoolbox = "mltoolbox.cli:cli"
-mlt = "mlt.cli:main"
-instancebot = "instancebot.cli:cli"
 
 [build-system]
 requires = ["hatchling"]
@@ -64,9 +55,8 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mltoolbox", "src/instancebot"]
+packages = ["src/mltoolbox"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/mltoolbox/base" = "mltoolbox/base"
 "src/mltoolbox/templates" = "mltoolbox/templates"
-"src/mlt/mlt" = "mlt"
