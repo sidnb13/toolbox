@@ -98,31 +98,29 @@ fi
 # Create required directories
 mkdir -p /var/run/sshd /etc/ssh/sshd_config.d
 
-# Configure SSH: key-only auth on custom port
+# Create a root-owned SSH directory for container sshd (bind mount has wrong ownership)
+mkdir -p /root/.ssh_container
+chmod 700 /root/.ssh_container
+
+# Configure SSH: key-only auth on custom port, use container-owned authorized_keys
 cat > /etc/ssh/sshd_config.d/container.conf <<EOF
 Port ${CONTAINER_SSH_PORT}
 PermitRootLogin prohibit-password
 PasswordAuthentication no
 PubkeyAuthentication yes
-AuthorizedKeysFile /root/.ssh/authorized_keys
+AuthorizedKeysFile /root/.ssh_container/authorized_keys
 EOF
 
-# Create authorized_keys from mounted .pub files if it doesn't exist
-if [ ! -f "/root/.ssh/authorized_keys" ] && [ -d "/root/.ssh" ]; then
-    echo "📝 Creating authorized_keys from available public keys..."
-    find /root/.ssh -name "*.pub" -exec cat {} \; > /root/.ssh/authorized_keys 2>/dev/null || true
-fi
-
-# Fix SSH permissions (SSH is strict about this)
+# Create authorized_keys from mounted .pub files (copy to root-owned location)
 if [ -d "/root/.ssh" ]; then
-    chmod 700 /root/.ssh
-    if [ -f "/root/.ssh/authorized_keys" ]; then
-        chmod 600 /root/.ssh/authorized_keys
-        KEY_COUNT=$(wc -l < /root/.ssh/authorized_keys 2>/dev/null || echo "0")
-        echo "✅ authorized_keys configured with ${KEY_COUNT} key(s)"
-    else
-        echo "⚠️  No authorized_keys file created. SSH access may not work."
-    fi
+    echo "📝 Creating authorized_keys from available public keys..."
+    find /root/.ssh -name "*.pub" -exec cat {} \; > /root/.ssh_container/authorized_keys 2>/dev/null || true
+    chown root:root /root/.ssh_container/authorized_keys
+    chmod 600 /root/.ssh_container/authorized_keys
+    KEY_COUNT=$(wc -l < /root/.ssh_container/authorized_keys 2>/dev/null || echo "0")
+    echo "✅ authorized_keys configured with ${KEY_COUNT} key(s)"
+else
+    echo "⚠️  No .ssh directory found. SSH access may not work."
 fi
 
 # Start SSH daemon in background
