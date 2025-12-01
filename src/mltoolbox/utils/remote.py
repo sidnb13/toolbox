@@ -415,6 +415,46 @@ def setup_remote_ssh_keys(remote_config: RemoteConfig, ssh_key_name: str = None)
         return False
 
 
+def copy_local_pubkey_to_remote(remote_config: RemoteConfig):
+    """
+    Copy local machine's public key to remote host for container SSH access.
+    The container's entrypoint creates authorized_keys from .pub files in ~/.ssh/
+    """
+    logger = get_logger()
+    logger.step("Copying local public key to remote for container SSH access")
+
+    # Find local public key - try common names
+    local_ssh_dir = Path.home() / ".ssh"
+    pubkey_names = ["id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub"]
+
+    local_pubkey = None
+    for name in pubkey_names:
+        candidate = local_ssh_dir / name
+        if candidate.exists():
+            local_pubkey = candidate
+            break
+
+    if not local_pubkey:
+        logger.warning(
+            "No local public key found in ~/.ssh/ - container SSH may not work"
+        )
+        return False
+
+    # Read the public key content
+    pubkey_content = local_pubkey.read_text().strip()
+
+    # Copy to remote host as local_client.pub (distinct name to avoid overwriting)
+    copy_cmd = f'echo "{pubkey_content}" > ~/.ssh/local_client.pub && chmod 644 ~/.ssh/local_client.pub'
+
+    try:
+        remote_cmd(remote_config, [copy_cmd], use_working_dir=False)
+        logger.success(f"Copied {local_pubkey.name} to remote as local_client.pub")
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to copy local public key: {e}")
+        return False
+
+
 def wait_for_host(
     host: str,
     timeout: int | None = None,
@@ -866,7 +906,7 @@ def sync_project(
 
         def format_bytes(bytes_val):
             """Format bytes to human-readable format."""
-            for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            for unit in ["B", "KB", "MB", "GB", "TB"]:
                 if bytes_val < 1024.0:
                     return f"{bytes_val:.1f}{unit}"
                 bytes_val /= 1024.0
@@ -964,8 +1004,7 @@ def sync_project(
                         # File in progress - update bytes
                         if completed_files[full_filename] < file_bytes_transferred:
                             bytes_transferred += (
-                                file_bytes_transferred
-                                - completed_files[full_filename]
+                                file_bytes_transferred - completed_files[full_filename]
                             )
                             completed_files[full_filename] = file_bytes_transferred
 
@@ -973,7 +1012,9 @@ def sync_project(
                     current_time = time.time()
                     if current_time - last_update_time >= 1.0:
                         if total_bytes:
-                            percent_done = min(100, int((bytes_transferred / total_bytes) * 100))
+                            percent_done = min(
+                                100, int((bytes_transferred / total_bytes) * 100)
+                            )
                             logger.console.print(
                                 f"      └─ [dim]{format_bytes(bytes_transferred)}/{format_bytes(total_bytes)} ({percent_done}%)[/dim]"
                             )

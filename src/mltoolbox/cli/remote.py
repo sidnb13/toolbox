@@ -21,6 +21,7 @@ from mltoolbox.utils.helpers import remote_cmd
 from mltoolbox.utils.logger import get_logger
 from mltoolbox.utils.remote import (
     build_rclone_cmd,
+    copy_local_pubkey_to_remote,
     fetch_remote,
     run_rclone_sync,
     setup_claude_code,
@@ -312,8 +313,7 @@ def connect(
     logger.console.print()  # Spacing
     logger.hint(f"Access host: [cyan]ssh {remote.alias}[/cyan]")
     logger.hint(
-        f"Access container: [cyan]ssh {container_alias}[/cyan] "
-        f"(port {container_ssh_port})"
+        f"Access container: [cyan]ssh {container_alias}[/cyan] (port {container_ssh_port})"
     )
 
     if not dryrun:
@@ -385,8 +385,7 @@ def connect(
         "DEPENDENCY_TAGS": dependency_tags,
     }
 
-    # Container SSH is always enabled
-    env_updates["ENABLE_CONTAINER_SSH"] = "true"
+    # Container SSH port (always enabled, port is configurable)
     env_updates["CONTAINER_SSH_PORT"] = str(container_ssh_port)
 
     # Add Jupyter configuration
@@ -422,6 +421,8 @@ def connect(
     # Set up SSH keys on remote host
     if not dryrun:
         setup_remote_ssh_keys(remote_config, ssh_key_name)
+        # Copy local public key to remote for container SSH access
+        copy_local_pubkey_to_remote(remote_config)
     else:
         logger.info("[DRYRUN] Would setup remote SSH keys (skipped)")
 

@@ -656,12 +656,13 @@ def start_container(
     # Start in detached mode with explicit env vars
     # Docker compose files live in .mlt/ subdirectory
     if remote_config:
-        # For remote, prepend env vars to the command
-        # cd into .mlt/ where docker-compose.yml lives
+        # For remote, source root .env then run docker compose from .mlt/
+        # This ensures all env vars from .env are available for docker compose substitution
         env_string = " ".join([f"{k}={v}" for k, v in env_vars.items()])
         env_string = f"COMPOSE_BAKE=true {env_string}"  # Always set COMPOSE_BAKE
 
-        base_cmd = f"cd .mlt && {env_string} docker compose up -d"
+        # Source .env from project root (current dir), then cd to .mlt and run docker compose
+        base_cmd = f"set -a && source .env 2>/dev/null; set +a; cd .mlt && {env_string} docker compose up -d"
         if build:
             base_cmd += " --build"
 

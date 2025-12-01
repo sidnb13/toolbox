@@ -85,52 +85,51 @@ if [ ! -z "${RAY_HEAD_ADDRESS}" ]; then
     fi
 fi
 
-# Container SSH Server Setup
-if [ "${ENABLE_CONTAINER_SSH}" = "true" ]; then
-    echo "🔐 Setting up container SSH server..."
+# Container SSH Server Setup (always enabled)
+CONTAINER_SSH_PORT=${CONTAINER_SSH_PORT:-2222}
+echo "🔐 Setting up container SSH server on port ${CONTAINER_SSH_PORT}..."
 
-    # Install openssh-server if not present
-    if ! command -v sshd &>/dev/null; then
-        echo "📦 Installing openssh-server..."
-        apt-get update -qq && apt-get install -y -qq openssh-server && rm -rf /var/lib/apt/lists/*
-    fi
+# Install openssh-server if not present
+if ! command -v sshd &>/dev/null; then
+    echo "📦 Installing openssh-server..."
+    apt-get update -qq && apt-get install -y -qq openssh-server && rm -rf /var/lib/apt/lists/*
+fi
 
-    # Create required directories
-    mkdir -p /var/run/sshd /etc/ssh/sshd_config.d
+# Create required directories
+mkdir -p /var/run/sshd /etc/ssh/sshd_config.d
 
-    # Configure SSH: key-only auth on custom port
-    cat > /etc/ssh/sshd_config.d/container.conf <<EOF
-Port ${CONTAINER_SSH_PORT:-2222}
+# Configure SSH: key-only auth on custom port
+cat > /etc/ssh/sshd_config.d/container.conf <<EOF
+Port ${CONTAINER_SSH_PORT}
 PermitRootLogin prohibit-password
 PasswordAuthentication no
 PubkeyAuthentication yes
 AuthorizedKeysFile /root/.ssh/authorized_keys
 EOF
 
-    # Create authorized_keys from mounted .pub files if it doesn't exist
-    if [ ! -f "/root/.ssh/authorized_keys" ] && [ -d "/root/.ssh" ]; then
-        echo "📝 Creating authorized_keys from available public keys..."
-        find /root/.ssh -name "*.pub" -exec cat {} \; > /root/.ssh/authorized_keys 2>/dev/null || true
-    fi
-
-    # Fix SSH permissions (SSH is strict about this)
-    if [ -d "/root/.ssh" ]; then
-        chmod 700 /root/.ssh
-        if [ -f "/root/.ssh/authorized_keys" ]; then
-            chmod 600 /root/.ssh/authorized_keys
-            KEY_COUNT=$(wc -l < /root/.ssh/authorized_keys 2>/dev/null || echo "0")
-            echo "✅ authorized_keys configured with ${KEY_COUNT} key(s)"
-        else
-            echo "⚠️  No authorized_keys file created. SSH access may not work."
-        fi
-    fi
-
-    # Start SSH daemon in background
-    echo "🚀 Starting SSH server on port ${CONTAINER_SSH_PORT:-2222}..."
-    /usr/sbin/sshd -D &
-    SSHD_PID=$!
-    echo "✅ SSH server started (PID: $SSHD_PID)"
+# Create authorized_keys from mounted .pub files if it doesn't exist
+if [ ! -f "/root/.ssh/authorized_keys" ] && [ -d "/root/.ssh" ]; then
+    echo "📝 Creating authorized_keys from available public keys..."
+    find /root/.ssh -name "*.pub" -exec cat {} \; > /root/.ssh/authorized_keys 2>/dev/null || true
 fi
+
+# Fix SSH permissions (SSH is strict about this)
+if [ -d "/root/.ssh" ]; then
+    chmod 700 /root/.ssh
+    if [ -f "/root/.ssh/authorized_keys" ]; then
+        chmod 600 /root/.ssh/authorized_keys
+        KEY_COUNT=$(wc -l < /root/.ssh/authorized_keys 2>/dev/null || echo "0")
+        echo "✅ authorized_keys configured with ${KEY_COUNT} key(s)"
+    else
+        echo "⚠️  No authorized_keys file created. SSH access may not work."
+    fi
+fi
+
+# Start SSH daemon in background
+echo "🚀 Starting SSH server on port ${CONTAINER_SSH_PORT}..."
+/usr/sbin/sshd -D &
+SSHD_PID=$!
+echo "✅ SSH server started (PID: $SSHD_PID)"
 
 # Jupyter Server Setup
 if [ "${ENABLE_JUPYTER}" = "true" ]; then
