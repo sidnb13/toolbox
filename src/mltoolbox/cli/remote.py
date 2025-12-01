@@ -108,11 +108,6 @@ def remote():
     "--port", "-P", default=None, type=int, help="SSH port to use (default 22)"
 )
 @click.option(
-    "--container-ssh",
-    is_flag=True,
-    help="Enable SSH server inside container for direct SSH access (port 2222)",
-)
-@click.option(
     "--container-ssh-port",
     default=2222,
     type=int,
@@ -149,7 +144,6 @@ def connect(
     dependency_tags,
     identity_file,
     port,
-    container_ssh,
     container_ssh_port,
     jupyter,
     jupyter_port,
@@ -300,31 +294,27 @@ def connect(
             f.write(f"    IdentityFile {remote.identity_file}\n")
         f.write("\n")
 
-        # Write container SSH config entry if enabled
-        if container_ssh:
-            f.write(f"# Container SSH access for {remote.alias}\n")
-            f.write(f"Host {container_alias}\n")
-            f.write(f"    HostName {remote.host}\n")
-            f.write("    User root\n")
-            f.write(f"    Port {container_ssh_port}\n")
-            f.write("    ForwardAgent yes\n")
-            if remote.identity_file:
-                f.write(f"    IdentityFile {remote.identity_file}\n")
-            f.write("\n")
+        # Write container SSH config entry (always enabled)
+        f.write(f"# Container SSH access for {remote.alias}\n")
+        f.write(f"Host {container_alias}\n")
+        f.write(f"    HostName {remote.host}\n")
+        f.write("    User root\n")
+        f.write(f"    Port {container_ssh_port}\n")
+        f.write("    ForwardAgent yes\n")
+        if remote.identity_file:
+            f.write(f"    IdentityFile {remote.identity_file}\n")
+        f.write("\n")
 
     from mltoolbox.utils.logger import get_logger
 
     logger = get_logger()
 
     logger.console.print()  # Spacing
-    logger.hint(f"Access your instance anytime with: [cyan]ssh {remote.alias}[/cyan]")
-
-    # Show container SSH hint if enabled
-    if container_ssh:
-        logger.hint(
-            f"Direct container SSH: [cyan]ssh {container_alias}[/cyan] "
-            f"(or [cyan]ssh root@{remote.host} -p {container_ssh_port}[/cyan])"
-        )
+    logger.hint(f"Access host: [cyan]ssh {remote.alias}[/cyan]")
+    logger.hint(
+        f"Access container: [cyan]ssh {container_alias}[/cyan] "
+        f"(port {container_ssh_port})"
+    )
 
     if not dryrun:
         setup_zshrc(remote_config)
@@ -395,11 +385,9 @@ def connect(
         "DEPENDENCY_TAGS": dependency_tags,
     }
 
-    # Add container SSH configuration
-    if container_ssh:
-        env_updates["ENABLE_CONTAINER_SSH"] = "true"
-        env_updates["CONTAINER_SSH_PORT"] = str(container_ssh_port)
-        logger.info(f"Container SSH enabled on port {container_ssh_port}")
+    # Container SSH is always enabled
+    env_updates["ENABLE_CONTAINER_SSH"] = "true"
+    env_updates["CONTAINER_SSH_PORT"] = str(container_ssh_port)
 
     # Add Jupyter configuration
     if jupyter:
@@ -464,9 +452,10 @@ def connect(
     )  # Use full/raw version for Ray
 
     # Store port mappings including new services
-    port_mappings_dict = {"ray_dashboard": host_ray_dashboard_port}
-    if container_ssh:
-        port_mappings_dict["container_ssh"] = container_ssh_port
+    port_mappings_dict = {
+        "ray_dashboard": host_ray_dashboard_port,
+        "container_ssh": container_ssh_port,
+    }
     if jupyter:
         port_mappings_dict["jupyter"] = jupyter_port
 
@@ -538,11 +527,10 @@ def connect(
             "      │  [dim]Colab:[/dim] Connect → Connect to local runtime → enter URL"
         )
 
-    # Add container SSH info if enabled (no port forwarding needed - direct access)
-    if container_ssh:
-        logger.console.print(
-            f"      ├─ [dim]Container SSH:[/dim] [cyan]ssh {container_alias}[/cyan] (port {container_ssh_port})"
-        )
+    # Container SSH info (always enabled - no port forwarding needed, direct access)
+    logger.console.print(
+        f"      ├─ [dim]Container SSH:[/dim] [cyan]ssh {container_alias}[/cyan] (port {container_ssh_port})"
+    )
 
     # Add additional user-specified port forwarding
     port_mappings_list = []

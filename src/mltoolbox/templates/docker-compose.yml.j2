@@ -32,7 +32,7 @@ services:
       - CONTAINER_ID=${CONTAINER_NAME}
       - RAY_HEAD_ADDRESS=localhost:6379
       # Container SSH and Jupyter configuration
-      - ENABLE_CONTAINER_SSH=${ENABLE_CONTAINER_SSH:-false}
+      - ENABLE_CONTAINER_SSH=${ENABLE_CONTAINER_SSH:-true}
       - CONTAINER_SSH_PORT=${CONTAINER_SSH_PORT:-2222}
       - ENABLE_JUPYTER=${ENABLE_JUPYTER:-false}
       - JUPYTER_PORT=${JUPYTER_PORT:-8888}
